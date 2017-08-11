@@ -292,6 +292,7 @@ struct skip_sock {
 	int protocol;
 	int kern;
 
+	struct sockaddr_skip saddr_sk;	/* the name of this skip socket */
 	struct sockaddr_storage ep;	/* actual endpoint in the host */
 
 	struct socket *sock;	/* this socket */
@@ -359,6 +360,8 @@ static int skip_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (!ep)
 		return -ENOENT;
 
+	memcpy(&ssk->saddr_sk, uaddr, addr_len); /* save for getname */
+
 
 	/* 2. create a host socket */
 	ret = __sock_create(get_net(&init_net), ep->saddr.ss_family,
@@ -423,31 +426,52 @@ static int skip_accept(struct socket *sock, struct socket *newsocket,
 		return -EADDRNOTAVAIL;
 	}
 
+	/* cut the newsocket from skip to the module of hsock.
+	 * accept() increments the refcnt of the module of newsocket
+	 * that is af_skip.ko, THIS_MODULE.
+	 */
+	newsocket->ops = hsock->ops;
+	__module_get(newsocket->ops->owner);
+	module_put(THIS_MODULE);
+
 	return hsock->ops->accept(hsock, newsocket, flags);
 }
 
 static int skip_getname(struct socket *sock, struct sockaddr *addr,
 			int *sockaddr_len, int peer)
 {
-	/* XXX: which names (skip ep or a real address on the host)
-	 * should be answered?
-	 */
+	struct skip_sock *ssk = skip_sk(sock->sk);
+	struct socket *hsock = skip_hsock(ssk);
 
-	struct socket *hsock = skip_hsock(skip_sk(sock->sk));	
-
-	if (!hsock) {
-		pr_debug("%s: host socket is not created\n", __func__);
-		return -EADDRNOTAVAIL;
+	if (peer) {
+		/* skip socket (currently) does not have any peer.
+		 * connection semantics are handled by host sockets.
+		 */
+		if (hsock)
+			return hsock->ops->getname(hsock, addr,
+						   sockaddr_len, peer);
+		else {
+			pr_debug("%s: host socket is not created\n", __func__);
+			return -EADDRNOTAVAIL;
+		}
+	} else {
+		/* getsockname() for this socket.
+		 * this (currently) returns sockaddr_skip.
+		 */
+		memcpy(addr, &ssk->saddr_sk, sizeof(ssk->saddr_sk));
+		*sockaddr_len = sizeof(ssk->saddr_sk);
+		return 0;
 	}
 
-	return hsock->ops->getname(hsock, addr, sockaddr_len, peer);
+	return 0;
 }
 
 static unsigned int skip_poll(struct file *file, struct socket *sock,
 			      struct poll_table_struct *wait)
 {
-	struct socket *hsock = skip_hsock(skip_sk(sock->sk));	
+	struct socket *hsock;
 
+	hsock = skip_hsock(skip_sk(sock->sk));
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
 		return -EADDRNOTAVAIL;
@@ -532,21 +556,23 @@ static int skip_getsockopt(struct socket *sock, int level,
 static int skip_sendmsg(struct socket *sock,
 			struct msghdr *m, size_t total_len)
 {
-	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
-	
+	struct socket *hsock;
+
+	hsock = skip_hsock(skip_sk(sock->sk));
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
 		return -EADDRNOTAVAIL;
 	}
 
-	return hsock->ops->sendmsg(hsock, m, total_len);
+	return hsock->ops->sendmsg(sock, m, total_len);
 }
 
 static int skip_recvmsg(struct socket *sock,
 			struct msghdr *m, size_t total_len, int flags)
 {
-	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
-	
+	struct socket *hsock;
+
+	hsock = skip_hsock(skip_sk(sock->sk));
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
 		return -EADDRNOTAVAIL;
@@ -558,8 +584,9 @@ static int skip_recvmsg(struct socket *sock,
 static ssize_t skip_sendpage(struct socket *sock, struct page *page,
 			     int offset, size_t size, int flags)
 {
-	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
-	
+	struct socket *hsock;
+
+	hsock = skip_hsock(skip_sk(sock->sk));
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
 		return -EADDRNOTAVAIL;
@@ -573,8 +600,9 @@ static ssize_t skip_splice_read(struct socket *sock, loff_t *ppos,
 			       struct pipe_inode_info *pipe,
 			       size_t len, unsigned int flags)
 {
-	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
-	
+	struct socket *hsock;
+
+	hsock = skip_hsock(skip_sk(sock->sk));
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
 		return -EADDRNOTAVAIL;

@@ -3,6 +3,9 @@
 #ifndef _SKIP_H_
 #define _SKIP_H_
 
+#include <linux/socket.h>	/* __kernel_sa_family_t */
+#include <linux/if.h>		/* IFNAMSIZ */
+
 #define SKIP_VERSION "0.0.1"
 
 
