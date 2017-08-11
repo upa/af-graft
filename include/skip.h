@@ -41,9 +41,8 @@ enum {
 /* genl attrs */
 
 struct af_skip_endpoint {
-	char ssk_epname[AF_SKIP_EPNAME_MAX];	/* endpoint */
-
-	struct sockaddr_storage ssk_saddr;
+	char ssk_epname[AF_SKIP_EPNAME_MAX];	/* end point name */
+	struct sockaddr_storage ssk_saddr;	/* host bind() end point */
 };
 
 enum {

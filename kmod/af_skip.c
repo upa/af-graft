@@ -118,6 +118,155 @@ static struct pernet_operations skip_net_ops = {
 
 
 
+/* Generic Netlink implementation */
+
+static int skip_nl_add_ep(struct sk_buff *skb, struct genl_info * info);
+static int skip_nl_del_ep(struct sk_buff *skb, struct genl_info * info);
+static int skip_nl_dump_ep(struct sk_buff *skb, struct netlink_callback *cb);
+
+static struct nla_policy skip_nl_policy[AF_SKIP_ATTR_MAX + 1] = {
+	[AF_SKIP_ATTR_ENDPOINT]	= { .type = NLA_BINARY,
+				    .len = sizeof(struct af_skip_endpoint) },
+};
+
+static struct genl_ops skip_nl_ops[] = {
+	{
+		.cmd	= AF_SKIP_CMD_ADD_ENDPOINT,
+		.doit	= skip_nl_add_ep,
+		.policy	= skip_nl_policy,
+		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= AF_SKIP_CMD_DEL_ENDPOINT,
+		.doit	= skip_nl_del_ep,
+		.policy	= skip_nl_policy,
+		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= AF_SKIP_CMD_GET_ENDPOINT,
+		.dumpit	= skip_nl_dump_ep,
+		.policy	= skip_nl_policy,
+	},
+};
+
+static struct genl_family skip_nl_family = {
+	.name		= AF_SKIP_GENL_NAME,
+	.version	= AF_SKIP_GENL_VERSION,
+	.maxattr	= AF_SKIP_ATTR_MAX,
+	.hdrsize	= 0,
+	.ops		= skip_nl_ops,
+	.n_ops		= ARRAY_SIZE(skip_nl_ops),
+	.module		= THIS_MODULE,
+};
+
+
+static int skip_nl_add_ep(struct sk_buff *skb, struct genl_info *info)
+{
+	int ret;
+	struct net *net = sock_net(skb->sk);
+	struct skip_net *skip = net_generic(net, skip_net_id);
+	struct skip_endpoint *ep;
+	struct af_skip_endpoint skip_ep;
+
+	if (!info->attrs[AF_SKIP_ATTR_ENDPOINT])
+		return -EINVAL;
+
+	nla_memcpy(&skip_ep, info->attrs[AF_SKIP_ATTR_ENDPOINT],
+		   sizeof(skip_ep));
+
+	ep = skip_find_ep(skip, skip_ep.ssk_epname);
+	if (ep)
+		return -EEXIST;
+
+	ret = skip_add_ep(skip, skip_ep.ssk_epname, skip_ep.ssk_saddr);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static int skip_nl_del_ep(struct sk_buff *skb, struct genl_info *info)
+{
+	struct net *net = sock_net(skb->sk);
+	struct skip_net *skip = net_generic(net, skip_net_id);
+	struct skip_endpoint *ep;
+	struct af_skip_endpoint skip_ep;
+
+	if (!info->attrs[AF_SKIP_ATTR_ENDPOINT])
+		return -EINVAL;
+
+	nla_memcpy(&skip_ep, info->attrs[AF_SKIP_ATTR_ENDPOINT],
+		   sizeof(skip_ep));
+
+	ep = skip_find_ep(skip, skip_ep.ssk_epname);
+	if (!ep)
+		return -ENOENT;
+
+	skip_del_ep(ep);
+
+	return 0;
+}
+
+static int skip_nl_send_ep(struct sk_buff *skb, u32 portid, u32 seq,
+			   int flags, struct skip_endpoint *ep)
+{
+	void *hdr;
+	struct af_skip_endpoint skip_ep;
+
+	hdr = genlmsg_put(skb, portid, seq, &skip_nl_family, flags,
+			  AF_SKIP_CMD_GET_ENDPOINT);
+
+	if (!hdr)
+		return -EMSGSIZE;
+
+	strncpy(skip_ep.ssk_epname, ep->epname, AF_SKIP_EPNAME_MAX);
+	skip_ep.ssk_saddr = ep->saddr;
+
+	if (nla_put(skb, AF_SKIP_ATTR_ENDPOINT, sizeof(skip_ep), &skip_ep))
+		goto nla_put_failure;
+
+	genlmsg_end(skb, hdr);
+
+	return 0;
+
+nla_put_failure:
+	genlmsg_cancel(skb, hdr);
+	return -EMSGSIZE;
+}
+
+static int skip_nl_dump_ep(struct sk_buff *skb, struct netlink_callback *cb)
+{
+	int ret, idx, cnt;
+	struct skip_net *skip = net_generic(sock_net(skb->sk), skip_net_id);
+	struct skip_endpoint *ep;
+
+	cnt = 0;
+	idx = cb->args[0];
+	
+	list_for_each_entry_rcu(ep, &skip->ep_list, list) {
+		if (idx > cnt) {
+			cnt ++;
+			continue;
+		}
+
+		ret = skip_nl_send_ep(skb, NETLINK_CB(cb->skb).portid,
+				      cb->nlh->nlmsg_seq, NLM_F_MULTI, ep);
+		if (ret < 0)
+			return ret;
+
+		break;
+	}
+
+	cb->args[0] = cnt + 1;
+
+	return skb->len;
+}
+
+
+
+
+/* AF_SKIP socket implementation  */
+
 struct skip_sock {
 	struct sock sk;
 
@@ -190,7 +339,7 @@ static int skip_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 
 	ep = skip_find_ep(skip, saddr_sk->ssk_epname);
 	if (!ep)
-		return -EADDRNOTAVAIL;
+		return -ENOENT;
 
 
 	/* 2. create a host socket */
@@ -222,11 +371,11 @@ static int skip_connect(struct socket *sock, struct sockaddr *vaddr,
 {
 	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
 
-	/* XXX: should i accept AF_SKIP endpoints for destination? */
+	/* XXX: should i accept AF_SKIP endpoints for destinations? */
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->connect(hsock, vaddr, sockaddr_len, flags);
@@ -240,7 +389,7 @@ static int skip_socketpair(struct socket *sock1, struct socket *sock2)
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->socketpair(hsock, sock2);
@@ -253,7 +402,7 @@ static int skip_accept(struct socket *sock, struct socket *newsocket,
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->accept(hsock, newsocket, flags);
@@ -262,13 +411,15 @@ static int skip_accept(struct socket *sock, struct socket *newsocket,
 static int skip_getname(struct socket *sock, struct sockaddr *addr,
 			int *sockaddr_len, int peer)
 {
-	/* XXX: getname should be executed on vsock? */
+	/* XXX: which names (skip ep or a real address on the host)
+	 * should be answered?
+	 */
 
 	struct socket *hsock = skip_hsock(skip_sk(sock->sk));	
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->getname(hsock, addr, sockaddr_len, peer);
@@ -281,7 +432,7 @@ static unsigned int skip_poll(struct file *file, struct socket *sock,
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->poll(file, hsock, wait);
@@ -291,13 +442,11 @@ static unsigned int skip_poll(struct file *file, struct socket *sock,
 static int skip_ioctl(struct socket *sock, unsigned int cmd,
 		      unsigned long arg)
 {
-	/* XXX: ioctl should be executed on both h/vsock? */
-
 	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->ioctl(hsock, cmd, arg);
@@ -305,13 +454,11 @@ static int skip_ioctl(struct socket *sock, unsigned int cmd,
 
 static int skip_listen(struct socket *sock, int len)
 {
-	/* XXX: ioctl should be executed on both h/vsock? */
-
 	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->listen(hsock, len);
@@ -330,7 +477,7 @@ static int skip_shutdown(struct socket *sock, int flags)
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->shutdown(hsock, flags);
@@ -340,13 +487,11 @@ static int skip_setsockopt(struct socket *sock, int level,
 			   int optname, char __user *optval,
 			   unsigned int optlen)
 {
-	/* XXX: setsockopt should be executed on both h/vsock? */
-
 	struct socket *hsock = skip_hsock(skip_sk(sock->sk));
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->setsockopt(hsock, level, optname, optval, optlen);
@@ -360,7 +505,7 @@ static int skip_getsockopt(struct socket *sock, int level,
 
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->getsockopt(hsock, level, optname, optval, optlen);
@@ -373,7 +518,7 @@ static int skip_sendmsg(struct socket *sock,
 	
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->sendmsg(hsock, m, total_len);
@@ -386,7 +531,7 @@ static int skip_recvmsg(struct socket *sock,
 	
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->recvmsg(hsock, m, total_len, flags);
@@ -399,7 +544,7 @@ static ssize_t skip_sendpage(struct socket *sock, struct page *page,
 	
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->sendpage(hsock, page, offset, size, flags);
@@ -414,7 +559,7 @@ static ssize_t skip_splice_read(struct socket *sock, loff_t *ppos,
 	
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->splice_read(hsock, ppos, pipe, len, flags);
@@ -422,13 +567,11 @@ static ssize_t skip_splice_read(struct socket *sock, loff_t *ppos,
 
 static int skip_set_peek_off(struct sock *sk, int val)
 {
-	/* XXX: set_peek_off should be executed on both h/vsock? */
-
 	struct socket *hsock = skip_hsock(skip_sk(sk));
 	
 	if (!hsock) {
 		pr_debug("%s: host socket is not created\n", __func__);
-		return -EOPNOTSUPP;
+		return -EADDRNOTAVAIL;
 	}
 
 	return hsock->ops->set_peek_off(hsock->sk, val);
@@ -512,6 +655,10 @@ static int __init af_skip_init(void)
 	if (ret)
 		goto netns_failed;
 
+	ret = genl_register_family(&skip_nl_family);
+	if (ret)
+		goto genl_failed;
+
 	ret = proto_register(&skip_proto, 1);
 	if (ret) {
 		pr_err("%s: proto_register failed '%d'\n", __func__, ret);
@@ -531,6 +678,8 @@ static int __init af_skip_init(void)
 sock_register_failed:
 	proto_unregister(&skip_proto);
 proto_register_failed:
+	genl_unregister_family(&skip_nl_family);
+genl_failed:
 	unregister_pernet_subsys(&skip_net_ops);
 netns_failed:
 	return ret;
@@ -541,6 +690,7 @@ static void __exit af_skip_exit(void)
 {
 	sock_unregister(PF_SKIP);
 	proto_unregister(&skip_proto);
+	genl_unregister_family(&skip_nl_family);
 	unregister_pernet_subsys(&skip_net_ops);
 
 	pr_info("skip version (%s) is unloaded\n", SKIP_VERSION);
