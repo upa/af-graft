@@ -61,7 +61,8 @@ static struct skip_endpoint *skip_find_ep(struct skip_net *skip, char *epname)
 static int skip_add_ep(struct skip_net *skip,
 			char *epname, struct sockaddr_storage saddr)
 {
-	struct skip_endpoint *ep;
+	bool found = false;
+	struct skip_endpoint *ep, *next;
 
 	ep = (struct skip_endpoint *)kmalloc(sizeof(struct skip_endpoint),
 					     GFP_KERNEL);
@@ -72,7 +73,19 @@ static int skip_add_ep(struct skip_net *skip,
 	strncpy(ep->epname, epname, AF_SKIP_EPNAME_MAX);
 	ep->saddr = saddr;
 
-	list_add_rcu(&ep->list, &skip->ep_list);
+
+	/* not needed, but i want to sort. */
+	list_for_each_entry_rcu(next, &skip->ep_list, list) {
+		if (strncmp(ep->epname, next->epname,
+			    AF_SKIP_EPNAME_MAX) < 0) {
+			found = true;
+			break;
+		}
+	}
+	if (found)
+		__list_add_rcu(&ep->list, next->list.prev, &next->list);
+	else
+		list_add_tail_rcu(&ep->list, &skip->ep_list);
 
 	return 0;
 }
@@ -173,6 +186,11 @@ static int skip_nl_add_ep(struct sk_buff *skb, struct genl_info *info)
 
 	nla_memcpy(&skip_ep, info->attrs[AF_SKIP_ATTR_ENDPOINT],
 		   sizeof(skip_ep));
+
+	if (skip_ep.ssk_epname[0] == '\0') {
+		/* never allow NULL name endpoint. */
+		return -EINVAL;
+	}
 
 	ep = skip_find_ep(skip, skip_ep.ssk_epname);
 	if (ep)
