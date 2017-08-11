@@ -40,10 +40,10 @@ struct skip_param {
 void usage(void)
 {
 	fprintf(stderr,
-		"Usage: ip skip add endpoint NAME\n"
+		"Usage: ip skip add NAME\n"
 		"          type { ipv4 | ipv6 } addr ADDR port PORT\n"
 		"\n"
-		"       ip skip del endpoint name NAME\n"
+		"       ip skip del NAME\n"
 		"\n"
 		"       ip skip show\n"
 		"\n"
