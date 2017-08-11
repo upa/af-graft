@@ -6,10 +6,10 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-#include <skip.h>
+#include <graft.h>
 
 #define PROGNAME "bind-test"
-#include <skip_util.h>
+#include <graft_util.h>
 
 
 
@@ -19,7 +19,7 @@ int main(int argc, char **argv)
 	int sock, accept_sock;
 	socklen_t len;
 	char *epname;
-	struct sockaddr_skip saddr_sk;
+	struct sockaddr_gr saddr_gr;
 	struct sockaddr_storage client;
 
 	if (argc < 2) {
@@ -28,19 +28,19 @@ int main(int argc, char **argv)
 	}
 	epname = argv[1];
 
-	memset(&saddr_sk, 0, sizeof(saddr_sk));
-	saddr_sk.ssk_family = AF_SKIP;
-	strncpy(saddr_sk.ssk_epname, epname, AF_SKIP_EPNAME_MAX);
+	memset(&saddr_gr, 0, sizeof(saddr_gr));
+	saddr_gr.sgr_family = AF_GRAFT;
+	strncpy(saddr_gr.sgr_epname, epname, AF_GRAFT_EPNAME_MAX);
 	
-	pr("bind skip socket to endpoint '%s'", argv[1]);
+	pr("bind graft socket to endpoint '%s'", argv[1]);
 
-	sock = socket(AF_SKIP, SOCK_STREAM, 0);
+	sock = socket(AF_GRAFT, SOCK_STREAM, 0);
 	if (sock < 0) {
 		pr_e("socket() failed: %s", strerror(errno));
 		return -1;
 	}
 
-	if (bind(sock, (struct sockaddr *)&saddr_sk, sizeof(saddr_sk)) < 0) {
+	if (bind(sock, (struct sockaddr *)&saddr_gr, sizeof(saddr_gr)) < 0) {
 		pr_e("bind() failed: %s", strerror(errno));
 		return -1;
 	}

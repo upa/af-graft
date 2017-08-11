@@ -1,5 +1,5 @@
 /*
- * ipskip.c 
+ * ipgraft.c 
  */
 
 #include <stdio.h>
@@ -14,7 +14,7 @@
 
 #include <linux/genetlink.h>
 
-#include <skip.h>
+#include <graft.h>
 
 #include "libgenl.h"
 #include "utils.h"
@@ -27,8 +27,8 @@ static int genl_family = -1;
 static void usage(void) __attribute__((noreturn));
 
 
-struct skip_param {
-	char		name[AF_SKIP_EPNAME_MAX];
+struct graft_param {
+	char		name[AF_GRAFT_EPNAME_MAX];
 	int		family;
 	struct in_addr	addr4;
 	struct in6_addr	addr6;
@@ -40,12 +40,12 @@ struct skip_param {
 void usage(void)
 {
 	fprintf(stderr,
-		"Usage: ip skip add NAME\n"
+		"Usage: ip graft add NAME\n"
 		"          type { ipv4 | ipv6 } addr ADDR port PORT\n"
 		"\n"
-		"       ip skip del NAME\n"
+		"       ip graft del NAME\n"
 		"\n"
-		"       ip skip show\n"
+		"       ip graft show\n"
 		"\n"
 		"Where: NAME := STRING\n"
 		"       ADDR := { IP_ADDRESS }\n"
@@ -56,23 +56,23 @@ void usage(void)
 }
 
 
-static int parse_args(int argc, char **argv, struct skip_param *p)
+static int parse_args(int argc, char **argv, struct graft_param *p)
 {
 	int rc;
-	memset(p, 0, sizeof(struct skip_param));
+	memset(p, 0, sizeof(struct graft_param));
 
 	if (argc < 1)
 		usage();
 
 	/* 1st argv always must be endpoint name */
-	if (strlen(*argv) > AF_SKIP_EPNAME_MAX) {
+	if (strlen(*argv) > AF_GRAFT_EPNAME_MAX) {
 		fprintf(stderr,
 			"Error: "
 			"endpoint name must be less than %d characters\n",
-			AF_SKIP_EPNAME_MAX);
+			AF_GRAFT_EPNAME_MAX);
 		exit(-1);
 	}
-	strncpy(p->name, *argv, AF_SKIP_EPNAME_MAX);
+	strncpy(p->name, *argv, AF_GRAFT_EPNAME_MAX);
 
 
 	argc--;
@@ -145,8 +145,8 @@ static int parse_args(int argc, char **argv, struct skip_param *p)
 
 static int do_add(int argc, char **argv)
 {
-	struct skip_param p;
-	struct af_skip_endpoint skip_ep;
+	struct graft_param p;
+	struct af_graft_endpoint graft_ep;
 	struct sockaddr_in *saddr_in;
 	struct sockaddr_in6 *saddr_in6;
 
@@ -159,19 +159,19 @@ static int do_add(int argc, char **argv)
 		exit(-1);
 	}
 
-	memset(&skip_ep, 0, sizeof(skip_ep));
-	strncpy(skip_ep.ssk_epname, p.name, AF_SKIP_EPNAME_MAX);
+	memset(&graft_ep, 0, sizeof(graft_ep));
+	strncpy(graft_ep.sgr_epname, p.name, AF_GRAFT_EPNAME_MAX);
 	
 	switch(p.family) {
 	case AF_INET :
-		saddr_in = (struct sockaddr_in *)&skip_ep.ssk_saddr;
+		saddr_in = (struct sockaddr_in *)&graft_ep.sgr_saddr;
 		saddr_in->sin_family = AF_INET;
 		saddr_in->sin_port = htons(p.port);
 		saddr_in->sin_addr = p.addr4;
 		break;
 
 	case AF_INET6:
-		saddr_in6 = (struct sockaddr_in6 *)&skip_ep.ssk_saddr;
+		saddr_in6 = (struct sockaddr_in6 *)&graft_ep.sgr_saddr;
 		saddr_in6->sin6_family = AF_INET6;
 		saddr_in6->sin6_port = htons(p.port);
 		saddr_in6->sin6_addr = p.addr6;
@@ -187,11 +187,11 @@ static int do_add(int argc, char **argv)
 	}
 
 
-	GENL_REQUEST(req, 1024, genl_family, 0, AF_SKIP_GENL_VERSION,
-		     AF_SKIP_CMD_ADD_ENDPOINT, NLM_F_REQUEST | NLM_F_ACK);
+	GENL_REQUEST(req, 1024, genl_family, 0, AF_GRAFT_GENL_VERSION,
+		     AF_GRAFT_CMD_ADD_ENDPOINT, NLM_F_REQUEST | NLM_F_ACK);
 
-	addattr_l(&req.n, 1024, AF_SKIP_ATTR_ENDPOINT, &skip_ep,
-		  sizeof(skip_ep));
+	addattr_l(&req.n, 1024, AF_GRAFT_ATTR_ENDPOINT, &graft_ep,
+		  sizeof(graft_ep));
 
 	if (rtnl_talk(&genl_rth, &req.n, NULL, 0) < 0)
 		return -2;
@@ -201,8 +201,8 @@ static int do_add(int argc, char **argv)
 	
 static int do_del(int argc, char **argv)
 {
-	struct skip_param p;
-	struct af_skip_endpoint skip_ep;
+	struct graft_param p;
+	struct af_graft_endpoint graft_ep;
 
 	if (parse_args(argc, argv, &p) < 0)
 		return -1;
@@ -213,14 +213,14 @@ static int do_del(int argc, char **argv)
 		exit(-1);
 	}
 
-	memset(&skip_ep, 0, sizeof(skip_ep));
-	strncpy(skip_ep.ssk_epname, p.name, AF_SKIP_EPNAME_MAX);
+	memset(&graft_ep, 0, sizeof(graft_ep));
+	strncpy(graft_ep.sgr_epname, p.name, AF_GRAFT_EPNAME_MAX);
 
-	GENL_REQUEST(req, 1024, genl_family, 0, AF_SKIP_GENL_VERSION,
-		     AF_SKIP_CMD_DEL_ENDPOINT, NLM_F_REQUEST | NLM_F_ACK);
+	GENL_REQUEST(req, 1024, genl_family, 0, AF_GRAFT_GENL_VERSION,
+		     AF_GRAFT_CMD_DEL_ENDPOINT, NLM_F_REQUEST | NLM_F_ACK);
 
-	addattr_l(&req.n, 1024, AF_SKIP_ATTR_ENDPOINT, &skip_ep,
-		  sizeof(skip_ep));
+	addattr_l(&req.n, 1024, AF_GRAFT_ATTR_ENDPOINT, &graft_ep,
+		  sizeof(graft_ep));
 
 	if (rtnl_talk(&genl_rth, &req.n, NULL, 0) < 0)
 		return -2;
@@ -228,17 +228,17 @@ static int do_del(int argc, char **argv)
 	return 0;
 }
 
-static void print_ep(struct af_skip_endpoint *skip_ep)
+static void print_ep(struct af_graft_endpoint *graft_ep)
 {
 	char buf[64];
 	struct sockaddr_in *saddr_in;
 	struct sockaddr_in6 *saddr_in6;
 
-	printf("%s ", skip_ep->ssk_epname);
+	printf("%s ", graft_ep->sgr_epname);
 
-	switch(skip_ep->ssk_saddr.ss_family) {
+	switch(graft_ep->sgr_saddr.ss_family) {
 	case AF_INET:
-		saddr_in = (struct sockaddr_in *)&skip_ep->ssk_saddr;
+		saddr_in = (struct sockaddr_in *)&graft_ep->sgr_saddr;
 		inet_ntop(AF_INET, &saddr_in->sin_addr, buf, sizeof(buf));
 		printf("type ipv4 ");
 		printf("addr %s ", buf);
@@ -249,7 +249,7 @@ static void print_ep(struct af_skip_endpoint *skip_ep)
 		break;
 
 	case AF_INET6:
-		saddr_in6 = (struct sockaddr_in6 *)&skip_ep->ssk_saddr;
+		saddr_in6 = (struct sockaddr_in6 *)&graft_ep->sgr_saddr;
 		inet_ntop(AF_INET6, &saddr_in6->sin6_addr, buf, sizeof(buf));
 		printf("type ipv6 ");
 		printf("addr %s ", buf);
@@ -269,9 +269,9 @@ static void print_ep(struct af_skip_endpoint *skip_ep)
 static int ep_nlmsg(const struct sockaddr_nl *who,
 		    struct nlmsghdr *n, void *arg)
 {
-	struct af_skip_endpoint skip_ep;
+	struct af_graft_endpoint graft_ep;
 	struct genlmsghdr *ghdr;
-	struct rtattr *attrs[AF_SKIP_ATTR_MAX + 1];
+	struct rtattr *attrs[AF_GRAFT_ATTR_MAX + 1];
 	int len;
 
 	if (n->nlmsg_type == NLMSG_ERROR)
@@ -282,18 +282,19 @@ static int ep_nlmsg(const struct sockaddr_nl *who,
 	if (len < 0)
 		return -1;
 
-	parse_rtattr(attrs, AF_SKIP_ATTR_MAX, (void *)ghdr + GENL_HDRLEN, len);
+	parse_rtattr(attrs, AF_GRAFT_ATTR_MAX,
+		     (void *)ghdr + GENL_HDRLEN, len);
 
-	if (!attrs[AF_SKIP_ATTR_ENDPOINT]) {
+	if (!attrs[AF_GRAFT_ATTR_ENDPOINT]) {
 		fprintf(stderr, "%s: endpoint not found in the nlmsg\n",
 			__func__);
 		return -EBADMSG;
 	}
 
-	memcpy(&skip_ep, RTA_DATA(attrs[AF_SKIP_ATTR_ENDPOINT]),
-	       sizeof(skip_ep));
+	memcpy(&graft_ep, RTA_DATA(attrs[AF_GRAFT_ATTR_ENDPOINT]),
+	       sizeof(graft_ep));
 
-	print_ep(&skip_ep);
+	print_ep(&graft_ep);
 
 	return 0;
 }
@@ -301,7 +302,7 @@ static int ep_nlmsg(const struct sockaddr_nl *who,
 static int do_show(int argc, char **argv)
 {
 	GENL_REQUEST(req, 128, genl_family, 0,
-		     AF_SKIP_GENL_VERSION, AF_SKIP_CMD_GET_ENDPOINT,
+		     AF_GRAFT_GENL_VERSION, AF_GRAFT_CMD_GET_ENDPOINT,
 		     NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST);
 
 	req.n.nlmsg_seq = genl_rth.dump = ++ genl_rth.seq;
@@ -317,12 +318,12 @@ static int do_show(int argc, char **argv)
 	return 0;
 }
 
-int do_ipskip(int argc, char **argv)
+int do_ipgraft(int argc, char **argv)
 {
 	if (argc < 1 || !matches(*argv, "help"))
 		usage();
 
-	if (genl_init_handle(&genl_rth, AF_SKIP_GENL_NAME, &genl_family))
+	if (genl_init_handle(&genl_rth, AF_GRAFT_GENL_NAME, &genl_family))
 		exit(1);
 
 	if (matches(*argv, "add") == 0)
@@ -334,7 +335,7 @@ int do_ipskip(int argc, char **argv)
 		return do_show(argc - 1, argv + 1);
 
 	fprintf(stderr,
-		"Command \"%s\" is unkonw, type \"ip skip help\".\n", *argv);
+		"Command \"%s\" is unkonw, type \"ip graft help\".\n", *argv);
 
 	exit(-1);
 }
