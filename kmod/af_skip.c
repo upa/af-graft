@@ -564,7 +564,7 @@ static int skip_sendmsg(struct socket *sock,
 		return -EADDRNOTAVAIL;
 	}
 
-	return hsock->ops->sendmsg(sock, m, total_len);
+	return hsock->ops->sendmsg(hsock, m, total_len);
 }
 
 static int skip_recvmsg(struct socket *sock,
