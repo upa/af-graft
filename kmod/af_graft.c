@@ -168,6 +168,7 @@ static struct genl_family graft_nl_family = {
 	.version	= AF_GRAFT_GENL_VERSION,
 	.maxattr	= AF_GRAFT_ATTR_MAX,
 	.hdrsize	= 0,
+	.netnsok	= true,
 	.ops		= graft_nl_ops,
 	.n_ops		= ARRAY_SIZE(graft_nl_ops),
 	.module		= THIS_MODULE,
