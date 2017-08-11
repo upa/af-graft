@@ -1,0 +1,13 @@
+*.ko
+*.o
+*.mod.c
+.*.cmd
+.tmp*
+.*.swp
+modules.order
+Module.symvers
+*.out
+core
+*.o.d
+
+setup.sh
