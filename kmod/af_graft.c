@@ -38,7 +38,8 @@ struct graft_endpoint {
 	struct list_head	list;
 	struct rcu_head		rcu;
 
-	char epname[AF_GRAFT_EPNAME_MAX];
+	char			epname[AF_GRAFT_EPNAME_MAX];
+	int			addrlen;	/* length of actual saddr */
 	struct sockaddr_storage saddr;	/* actual endpoint in the host */
 };
 
@@ -56,8 +57,9 @@ static struct graft_endpoint *graft_find_ep(struct graft_net *graft,
 	return NULL;
 }
 
-static int graft_add_ep(struct graft_net *graft,
-			char *epname, struct sockaddr_storage saddr)
+static int graft_add_ep(struct graft_net *graft, char *epname,
+			struct sockaddr_storage saddr, int addrlen)
+
 {
 	bool found = false;
 	struct graft_endpoint *ep, *next;
@@ -69,8 +71,8 @@ static int graft_add_ep(struct graft_net *graft,
 	memset(ep, 0, sizeof(*ep));
 
 	strncpy(ep->epname, epname, AF_GRAFT_EPNAME_MAX);
+	ep->addrlen = addrlen;
 	ep->saddr = saddr;
-
 
 	/* not needed, but i want to sort. */
 	list_for_each_entry_rcu(next, &graft->ep_list, list) {
@@ -137,7 +139,8 @@ static int graft_nl_dump_ep(struct sk_buff *skb, struct netlink_callback *cb);
 
 static struct nla_policy graft_nl_policy[AF_GRAFT_ATTR_MAX + 1] = {
 	[AF_GRAFT_ATTR_ENDPOINT] = { .type = NLA_BINARY,
-				     .len = sizeof(struct af_graft_endpoint) },
+				     .len =
+				     sizeof(struct graft_genl_endpoint) },
 };
 
 static struct genl_ops graft_nl_ops[] = {
@@ -177,7 +180,7 @@ static int graft_nl_add_ep(struct sk_buff *skb, struct genl_info *info)
 	struct net *net = sock_net(skb->sk);
 	struct graft_net *graft = net_generic(net, graft_net_id);
 	struct graft_endpoint *ep;
-	struct af_graft_endpoint graft_ep;
+	struct graft_genl_endpoint graft_ep;
 
 	if (!info->attrs[AF_GRAFT_ATTR_ENDPOINT])
 		return -EINVAL;
@@ -185,16 +188,17 @@ static int graft_nl_add_ep(struct sk_buff *skb, struct genl_info *info)
 	nla_memcpy(&graft_ep, info->attrs[AF_GRAFT_ATTR_ENDPOINT],
 		   sizeof(graft_ep));
 
-	if (graft_ep.sgr_epname[0] == '\0') {
+	if (graft_ep.epname[0] == '\0') {
 		/* never allow NULL name endpoint. */
 		return -EINVAL;
 	}
 
-	ep = graft_find_ep(graft, graft_ep.sgr_epname);
+	ep = graft_find_ep(graft, graft_ep.epname);
 	if (ep)
 		return -EEXIST;
 
-	ret = graft_add_ep(graft, graft_ep.sgr_epname, graft_ep.sgr_saddr);
+	ret = graft_add_ep(graft, graft_ep.epname,
+			   graft_ep.saddr, graft_ep.addrlen);
 	if (ret < 0)
 		return ret;
 
@@ -206,7 +210,7 @@ static int graft_nl_del_ep(struct sk_buff *skb, struct genl_info *info)
 	struct net *net = sock_net(skb->sk);
 	struct graft_net *graft = net_generic(net, graft_net_id);
 	struct graft_endpoint *ep;
-	struct af_graft_endpoint graft_ep;
+	struct graft_genl_endpoint graft_ep;
 
 	if (!info->attrs[AF_GRAFT_ATTR_ENDPOINT])
 		return -EINVAL;
@@ -214,7 +218,7 @@ static int graft_nl_del_ep(struct sk_buff *skb, struct genl_info *info)
 	nla_memcpy(&graft_ep, info->attrs[AF_GRAFT_ATTR_ENDPOINT],
 		   sizeof(graft_ep));
 
-	ep = graft_find_ep(graft, graft_ep.sgr_epname);
+	ep = graft_find_ep(graft, graft_ep.epname);
 	if (!ep)
 		return -ENOENT;
 
@@ -227,7 +231,7 @@ static int graft_nl_send_ep(struct sk_buff *skb, u32 portid, u32 seq,
 			    int flags, struct graft_endpoint *ep)
 {
 	void *hdr;
-	struct af_graft_endpoint graft_ep;
+	struct graft_genl_endpoint graft_ep;
 
 	hdr = genlmsg_put(skb, portid, seq, &graft_nl_family, flags,
 			  AF_GRAFT_CMD_GET_ENDPOINT);
@@ -235,8 +239,8 @@ static int graft_nl_send_ep(struct sk_buff *skb, u32 portid, u32 seq,
 	if (!hdr)
 		return -EMSGSIZE;
 
-	strncpy(graft_ep.sgr_epname, ep->epname, AF_GRAFT_EPNAME_MAX);
-	graft_ep.sgr_saddr = ep->saddr;
+	strncpy(graft_ep.epname, ep->epname, AF_GRAFT_EPNAME_MAX);
+	graft_ep.saddr = ep->saddr;
 
 	if (nla_put(skb, AF_GRAFT_ATTR_ENDPOINT, sizeof(graft_ep), &graft_ep))
 		goto nla_put_failure;
@@ -331,7 +335,7 @@ static int graft_release(struct socket *sock)
 	return 0;
 }
 
-static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 {
 	int ret;
 	struct net *net = sock_net(sock->sk);
@@ -349,7 +353,7 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	 */
 
 	/* 1. find graft endpoint specified by uaddr */
-	if (addr_len < sizeof(struct sockaddr_gr))
+	if (addrlen < sizeof(struct sockaddr_gr))
 		return -EINVAL;
 
 	if (saddr_gr->sgr_family != AF_GRAFT)
@@ -359,7 +363,7 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (!ep)
 		return -ENOENT;
 
-	memcpy(&gsk->saddr_gr, uaddr, addr_len); /* save for getname */
+	memcpy(&gsk->saddr_gr, uaddr, addrlen); /* save for getname */
 
 
 	/* 2. create a host socket */
@@ -376,7 +380,7 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	/* 3. bind() the host socket into the endpoint */
 	ret = gsk->hsock->ops->bind(gsk->hsock,
 				    (struct sockaddr *)&ep->saddr,
-				    sizeof(ep->saddr));
+				    ep->addrlen);
 	if (ret) {
 		pr_debug("%s: hsock->ops->bind() faied, ret=%d\n",
 			 __func__, ret);
@@ -670,7 +674,7 @@ static int graft_create(struct net *net, struct socket *sock,
 	gsk = graft_sk(sk);
 	gsk->sock = sock;
 	gsk->hsock = NULL;
-	gsk->saddr_gr.sgr_family = AF_INET;
+	gsk->saddr_gr.sgr_family = AF_GRAFT;
 
 	/* NOTE:
 	 * When graft socket is created, the address family used to open

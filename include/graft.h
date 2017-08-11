@@ -43,9 +43,10 @@ enum {
 
 /* genl attrs */
 
-struct af_graft_endpoint {
-	char sgr_epname[AF_GRAFT_EPNAME_MAX];	/* end point name */
-	struct sockaddr_storage sgr_saddr;	/* host bind() end point */
+struct graft_genl_endpoint {
+	char	epname[AF_GRAFT_EPNAME_MAX];	/* end point name */
+	ssize_t			addrlen;	/* length of actual saddr */
+	struct sockaddr_storage saddr;		/* host bind() end point */
 };
 
 enum {
