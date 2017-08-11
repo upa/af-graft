@@ -671,6 +671,7 @@ static int skip_create(struct net *net, struct socket *sock,
 	ssk = skip_sk(sk);
 	ssk->sock = sock;
 	ssk->hsock = NULL;
+	ssk->saddr_sk.ssk_family = AF_INET;
 
 	/* NOTE:
 	 * When skip socket is created, the address family used to open
