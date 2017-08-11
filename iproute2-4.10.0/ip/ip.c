@@ -101,6 +101,7 @@ static const struct cmd {
 	{ "netns",	do_netns },
 	{ "netconf",	do_ipnetconf },
 	{ "vrf",	do_ipvrf},
+	{ "skip", 	do_ipskip },
 	{ "help",	do_help },
 	{ 0 }
 };

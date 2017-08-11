@@ -58,6 +58,7 @@ int do_tcp_metrics(int argc, char **argv);
 int do_ipnetconf(int argc, char **argv);
 int do_iptoken(int argc, char **argv);
 int do_ipvrf(int argc, char **argv);
+int do_ipskip(int argc, char **argv);
 void vrf_reset(void);
 int netns_identify_pid(const char *pidstr, char *name, int len);
 
