@@ -40,6 +40,7 @@ struct sockaddr_gr {
 #define GRAFT_SO_DELAYED		1
 #define GRAFT_SO_DELAYED_EXECUTE	2
 #define GRAFT_SO_DELAYED_RESULT		3
+#define GRAFT_SO_TRANSPARENT		4
 /*
  * - GRAFT_SO_DELAYED: optval is int, default is 0 (off)
  *
@@ -72,13 +73,40 @@ struct sockaddr_gr {
  * struct graft_sso_result as many as delayed() setsockopt() is copied
  * to *optval, and optlen indicates the size of the array in byte.
  */
-
 struct graft_sso_result {
 	int level;
 	int optname;
 	int ret;
-};
+} __attribute__((__packed__));
 
+/*
+ * - GRAFT_SO_TRANSPARENT: optval is struct graft_sso_trans
+ *
+ * This option delivers setsockopt() to associated host sockets. This
+ * option exists fro SOL_SOCKET. The SOL_SOCKET handler is implemneted
+ * in fromt of address family setsockopt() handler, so that SOL_SOCKET
+ * setsockopt() is always done for only the face of graft sockets
+ * (struct socket->ops never be called). GRAFT_SO_TRANSPARENT called
+ * with IPPROTO_GRAFT delivers SOL_SOCKET options to host sockets
+ * through AF_GRAFT containing the arguments in struct
+ * graft_sso_trans.  getsockopt() does not work with this option
+ * because optval of getsockopt is userland buffer to receive otpval,
+ * not for delivering some parameters from user to kernel. Only
+ * GRAFT_SO_TRANSPARENT works in delayed execution of
+ * GRAFT_SO_DELAYED.
+ *
+ * This is Linux issue. I guess checking SOL_SOCKET should be done
+ * in each protocol implementation. Not in syscall (in net/socket.c).
+ *
+ */
+struct graft_sso_trans {
+	int level;
+	int optname;
+	unsigned int optlen;
+	char optval[];
+	/* optval continues here */
+} __attribute__((__packed__));
+#define GRAFT_SSO_TRANS_SIZE	128	/* max size include optval */
 
 
 /* Generic Netlink AF_GRAFT definition */

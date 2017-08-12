@@ -13,20 +13,30 @@
 #include <graft_util.h>
 
 
+int sso(int sock, int level, int optname, void *optval, socklen_t optlen)
+{
+	int ret;
+
+	pr("call level=%d, opt=%d", level, optname);
+	ret = setsockopt(sock, level, optname, optval, optlen);
+	if (ret < 0) {
+		pr_e("setsockopt failed ret=%d: %s", ret, strerror(errno));
+	}
+	
+	pr("setsockopt returns %d", ret);
+	return ret;
+}
+
 
 
 int main(int argc, char **argv)
 {
-	int ret, sock, level, optname, optval;
-
-	if (argc < 4) {
-		pr_e("usage: %s level optname value (all int)", argv[0]);
-		return -1;
-	}
-	
-	level	= atoi(argv[1]);
-	optname = atoi(argv[2]);
-	optval	= atoi(argv[3]);
+	int sock, val, ret;
+	struct graft_sso_trans *t;
+	struct sockaddr_gr sgr;
+	char buf[GRAFT_SSO_TRANS_SIZE];
+	t = (struct graft_sso_trans *)buf;
+	memset(buf, 0, sizeof(buf));
 
 	sock = socket(AF_GRAFT, SOCK_STREAM, 0);
 	if (sock < 0) {
@@ -34,16 +44,34 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	pr("fd=%d, level=%d, optname=%d, optval=%d",
-	   sock, level, optname, optval);
+	pr("enable delayed execution");
+	val = 1;
+	ret = sso(sock, IPPROTO_GRAFT, GRAFT_SO_DELAYED, &val, sizeof(val));
 
-	ret = setsockopt(sock, level, optname, &optval, sizeof(optval));
-	if (ret < 0) {
-		pr_e("setsockopt failed ret=%d: %s", ret, strerror(errno));
+	pr("SO_REUSEADDR through GRAFT_SO_TRANSPARENT");
+	val = 1;
+	t->level = SOL_SOCKET;
+	t->optname = SO_REUSEADDR;
+	t->optlen = sizeof(val);
+	memcpy(t->optval, &val, sizeof(val));
+	ret = sso(sock, IPPROTO_GRAFT, GRAFT_SO_TRANSPARENT, t, sizeof(buf));
+	pr("%d\n", *((int *)t->optval));
+
+	pr("gogo bind!");
+	if (!argv[1]) {
+		pr("to test bind(), specified epname in argv[1]");
+		goto out;
 	}
-	
-	pr("setsockopt returns %d", ret);
 
+	memset(&sgr, 0, sizeof(sgr));
+	sgr.sgr_family = AF_GRAFT;
+	strncpy(sgr.sgr_epname, argv[1], AF_GRAFT_EPNAME_MAX);
+	if (bind(sock, (struct sockaddr *)&sgr, sizeof(sgr)) < 0) {
+		pr_e("bind() failed: %s", strerror(errno));
+	}
+	pr("bind success!!");
+
+out:
 	close(sock);
 
 	return ret;
