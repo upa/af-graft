@@ -84,20 +84,16 @@ struct graft_sso_result {
  *
  * This option delivers setsockopt() to associated host sockets. This
  * option exists fro SOL_SOCKET. The SOL_SOCKET handler is implemneted
- * in fromt of address family setsockopt() handler, so that SOL_SOCKET
+ * before address family setsockopt() handler, so that SOL_SOCKET
  * setsockopt() is always done for only the face of graft sockets
  * (struct socket->ops never be called). GRAFT_SO_TRANSPARENT called
  * with IPPROTO_GRAFT delivers SOL_SOCKET options to host sockets
  * through AF_GRAFT containing the arguments in struct
- * graft_sso_trans.  getsockopt() does not work with this option
+ * graft_sso_trans. getsockopt() does not work with this option
  * because optval of getsockopt is userland buffer to receive otpval,
- * not for delivering some parameters from user to kernel. Only
- * GRAFT_SO_TRANSPARENT works in delayed execution of
- * GRAFT_SO_DELAYED.
- *
- * This is Linux issue. I guess checking SOL_SOCKET should be done
- * in each protocol implementation. Not in syscall (in net/socket.c).
- *
+ * not for delivering some parameters from user to kernel. If this
+ * option is called under GRAFT_SO_DELAYED, the setsockopt delivered
+ * to host socket is added to the delay execution queue.
  */
 struct graft_sso_trans {
 	int level;
