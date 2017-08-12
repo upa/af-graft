@@ -23,7 +23,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 
-
 /* Per netnamespace parameters.
  * af_graft keeps endpoint tables for per netnamespace
  */
@@ -288,6 +287,14 @@ static int graft_nl_dump_ep(struct sk_buff *skb, struct netlink_callback *cb)
 
 /* AF_GRAFT socket implementation  */
 
+/* delayed setsockopt() structure */
+struct graft_sso {
+	char *optval;
+	unsigned int optlen;
+	struct graft_sso_result res;
+};
+#define GRAFT_SSO_MAX	64
+
 struct graft_sock {
 	struct sock sk;
 
@@ -300,7 +307,13 @@ struct graft_sock {
 
 	struct socket *sock;	/* this socket */
 	struct socket *hsock;	/* socket with original family at host */
+
+	/* setsockopt() related */
+	spinlock_t sso_lock;
+	int graft_so_delayed;
+	struct graft_sso *sso[GRAFT_SSO_MAX];
 };
+
 
 static inline struct graft_sock *graft_sk(const struct sock *sk)
 {
@@ -312,9 +325,77 @@ static inline struct socket *graft_hsock(struct graft_sock *gsk)
 	return gsk->hsock;
 }
 
+/* setsockopt related functions */
+static int graft_sso_delayed_execute(struct graft_sock *gsk)
+{
+	/* call under spin_lock_bh(&gsk->sso_lock); */
 
+	int n, ret;
+	struct graft_sso *sso;
+	struct socket *hsock = graft_hsock(gsk);
+
+	if (!hsock) {
+		pr_debug("%s: host socket is not created\n", __func__);
+		return -EADDRNOTAVAIL;
+	}
+
+	for (n = 0; n < GRAFT_SSO_MAX; n++) {
+		sso = gsk->sso[n];
+		if (!sso)
+			continue;
+
+		ret = hsock->ops->setsockopt(hsock,
+					     sso->res.level,
+					     sso->res.optname,
+					     sso->optval,
+					     sso->optlen);
+		sso->res.ret = ret;
+	}
+
+	return 0;
+}
+
+static int graft_sso_delayed_result(struct graft_sock *gsk,
+				    char __user *optval, int __user *optlen)
+{
+	int ret = 0, res_siz, n, len, totlen;
+	char __user *ptr;
+	struct graft_sso *sso;
+
+	res_siz = sizeof(struct graft_sso_result);
+	get_user(len, optlen);
+	totlen = 0;
+	ptr = optval;
+
+	for (n = 0; n < GRAFT_SSO_MAX; n++) {
+		sso = gsk->sso[n];
+		if (!sso)
+			continue;
+
+		if (len - res_siz < 0) {
+			ret = -ENOBUFS;
+			break;
+		}
+
+		copy_to_user(ptr, &sso->res, res_siz);
+		totlen += res_siz;
+		ptr += res_siz;
+		len -= res_siz;
+		kfree(sso->optval);
+		kfree(sso);
+		gsk->sso[n] = NULL;
+	}
+
+	put_user(totlen, optlen);
+
+	return ret;
+}
+
+
+/* Graft socket operations */
 static int graft_release(struct socket *sock)
 {
+	int n;
 	struct sock *sk = sock->sk;
 	struct graft_sock *gsk;
 
@@ -327,6 +408,17 @@ static int graft_release(struct socket *sock)
 	gsk = graft_sk(sk);
 	if (gsk->hsock)
 		sock_release(gsk->hsock);
+
+	spin_lock_bh(&gsk->sso_lock);
+	for (n = 0; n < GRAFT_SSO_MAX; n++) {
+		if (gsk->sso[n]) {
+			kfree(gsk->sso[n]->optval);
+			kfree(gsk->sso[n]);
+			gsk->sso[n] = NULL;
+		}
+	}
+	spin_unlock_bh(&gsk->sso_lock);
+
 	sock_orphan(sk);
 	sk_refcnt_debug_release(sk);
 	sock_put(sk);
@@ -350,7 +442,8 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	 * 2. if found, create a socket on host stack with
 	 * the address family of the endpoint, type and protocol of
 	 * this socket.
-	 * 3. call bind() for the host socket with endpoint
+	 * 3. if delayed setsockopt()s exist, execute them.
+	 * 4. call bind() for the host socket with endpoint
 	 */
 
 	/* 1. find graft endpoint specified by uaddr */
@@ -378,7 +471,13 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	}
 
 
-	/* 3. bind() the host socket into the endpoint */
+	/* 3. execute delayed setsockopt() */
+	spin_lock_bh(&gsk->sso_lock);
+	graft_sso_delayed_execute(gsk);
+	spin_unlock_bh(&gsk->sso_lock);
+
+
+	/* 4. bind() the host socket into the endpoint */
 	ret = gsk->hsock->ops->bind(gsk->hsock,
 				    (struct sockaddr *)&ep->saddr,
 				    ep->addrlen);
@@ -533,28 +632,123 @@ static int graft_setsockopt(struct socket *sock, int level,
 			    int optname, char __user *optval,
 			    unsigned int optlen)
 {
-	struct socket *hsock = graft_hsock(graft_sk(sock->sk));
+	int val, n, ret = 0;
+	struct graft_sock *gsk = graft_sk(sock->sk);
+	struct graft_sso *sso;
+	struct socket *hsock;
 
-	if (!hsock) {
-		pr_debug("%s: host socket is not created\n", __func__);
-		return -EADDRNOTAVAIL;
+	pr_debug("%s: level %d, optname %d\n", __func__, level, optname);
+
+	spin_lock_bh(&gsk->sso_lock);
+
+	if (level == IPPROTO_GRAFT) {
+		/* setsockopt for this graft socket */
+		switch (optname) {
+		case GRAFT_SO_DELAYED:
+			get_user(val, (int __user *)optval);
+			gsk->graft_so_delayed = (val > 0) ? 1: 0;
+			break;
+
+		case GRAFT_SO_DELAYED_EXECUTE:
+			ret = graft_sso_delayed_execute(gsk);
+			break;
+
+		default:
+			pr_debug("%s: invalid opt %d\n", __func__, optname);
+			ret = -EINVAL;
+		}
+	} else {
+		/* setsockopt for the associated host socket */
+		if (gsk->graft_so_delayed) {
+			/* setsockopt is delayed until bind() or
+			 * GRAFT_SO_DELAYED_EXECUTE is called.
+			 * queueing setsockopt. */
+			sso = (struct graft_sso *)kmalloc(sizeof(*sso),
+							  GFP_KERNEL);
+			if (!sso) {
+				ret = -ENOMEM;
+				goto out;
+			}
+
+			sso->res.ret = 0;
+			sso->res.level = level;
+			sso->res.optname = optname;
+			sso->optlen = optlen;
+			sso->optval = kmalloc(optlen, GFP_KERNEL);
+			if (!sso->optval) {
+				ret = -ENOMEM;
+				goto out;
+			}
+			copy_from_user(sso->optval, optval, optlen);
+
+			for (n = 0; n < GRAFT_SSO_MAX; n++) {
+				if (!gsk->sso[n])
+					gsk->sso[n] = sso; /* store sso */
+			}
+		} else {
+			/* setsockopt is not delayed. call it to host
+			 * socket transparently */
+			hsock = graft_hsock(gsk);
+			if (!hsock) {
+				pr_debug("%s: host socket is not created\n",
+					 __func__);
+				ret = -EADDRNOTAVAIL;
+			} else {
+				ret = hsock->ops->setsockopt(hsock, level,
+							     optname, optval,
+							     optlen);
+			}
+		}
 	}
 
-	return hsock->ops->setsockopt(hsock, level, optname, optval, optlen);
+out:
+	spin_unlock_bh(&gsk->sso_lock);
+
+	return ret;
 }
 
 static int graft_getsockopt(struct socket *sock, int level,
 			    int optname, char __user *optval,
-			    int __user * optlen)
+			    int __user *optlen)
 {
-	struct socket *hsock = graft_hsock(graft_sk(sock->sk));
+	int ret = 0;
+	struct graft_sock *gsk = graft_sk(sock->sk);
+	struct socket *hsock;
 
-	if (!hsock) {
-		pr_debug("%s: host socket is not created\n", __func__);
-		return -EADDRNOTAVAIL;
+	pr_debug("%s: level %d, optname %d\n", __func__, level, optname);
+
+	spin_lock_bh(&gsk->sso_lock);
+	if (level == IPPROTO_GRAFT) {
+		/* getsockopt for this graft socket */
+		switch (optname) {
+		case GRAFT_SO_DELAYED:
+			put_user(sizeof(int), optlen);
+			copy_to_user(optval, &gsk->graft_so_delayed,
+				     sizeof(int));
+			break;
+
+		case GRAFT_SO_DELAYED_RESULT:
+			ret = graft_sso_delayed_result(gsk, optval, optlen);
+			break;
+
+		default:
+			pr_debug("%s: invalid opt %d\n", __func__, optname);
+		}
+	} else {
+		/* setsockopt for the associated host socket  */
+		hsock = graft_hsock(gsk);
+		if (!hsock) {
+			pr_debug("%s: host socket is not created\n", __func__);
+			ret = -EADDRNOTAVAIL;
+		} else {
+			ret = hsock->ops->getsockopt(hsock, level,
+						     optname, optval, optlen);
+		}
 	}
 
-	return hsock->ops->getsockopt(hsock, level, optname, optval, optlen);
+	spin_lock_bh(&gsk->sso_lock);
+
+	return ret;
 }
 
 static int graft_sendmsg(struct socket *sock,

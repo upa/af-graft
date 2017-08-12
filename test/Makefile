@@ -1,15 +1,14 @@
 CC = gcc 
-CFLAGS := -g -Wall
 INCLUDE := -I../include/
+CFLAGS := -g -Wall $(INCLUDE)
 
-PROGNAME = bind-test
-
+PROGNAME = bind-test setsockopt-test
 
 
 all: $(PROGNAME)
 
-bind-test: bind-test.c
-	$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
+.c.o:
+	$(CC) $< -o $@
 
 clean:
 	rm $(PROGNAME)
