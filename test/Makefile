@@ -2,7 +2,7 @@ CC = gcc
 INCLUDE := -I../include/
 CFLAGS := -g -Wall $(INCLUDE)
 
-PROGNAME = bind-test setsockopt-test
+PROGNAME = bind-test setsockopt-test getname-test
 
 
 all: $(PROGNAME)

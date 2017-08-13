@@ -555,6 +555,8 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		return ret;
 	}
 
+	pr_debug("%s: bind to %s\n", __func__, ep->epname);
+
 	return 0;
 }
 
@@ -608,24 +610,25 @@ static int graft_accept(struct socket *sock, struct socket *newsocket,
 	return hsock->ops->accept(hsock, newsocket, flags);
 }
 
-static int graft_getname(struct socket *sock, struct sockaddr *addr,
-			 int *sockaddr_len, int peer)
+static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
+			 int *uaddr_len, int peer)
 {
 	struct graft_sock *gsk = graft_sk(sock->sk);
 	struct socket *hsock = graft_hsock(gsk);
 
 	if (peer || gsk->graft_name_trans) {
 		if (hsock)
-			return hsock->ops->getname(hsock, addr,
-						   sockaddr_len, peer);
-		else {
-			pr_debug("%s: host socket is not created\n", __func__);
-			return -EADDRNOTAVAIL;
-		}
+			return hsock->ops->getname(hsock, uaddr, uaddr_len,
+						   peer);
+		/* if host socket does not exist, do not touch addr */
 	} else {
-		/* getsockname() and GRAFT_NAME_TRANSPARENT off */
-		memcpy(addr, &gsk->saddr_gr, sizeof(gsk->saddr_gr));
-		*sockaddr_len = sizeof(gsk->saddr_gr);
+		/* getsockname() and GRAFT_NAME_TRANSPARENT off,
+		 * this means getsocknet to this graft socket */
+		memcpy(uaddr, &gsk->saddr_gr,
+		       (*uaddr_len >= sizeof(gsk->saddr_gr) ) ?
+		       sizeof(gsk->saddr_gr) : *uaddr_len);
+
+		*uaddr_len = sizeof(gsk->saddr_gr);
 	}
 
 	return 0;
@@ -937,6 +940,7 @@ static struct proto graft_proto = {
 static int graft_create(struct net *net, struct socket *sock,
 			int protocol, int kern)
 {
+	int n;
 	struct sock *sk;
 	struct graft_sock *gsk;
 
@@ -951,9 +955,16 @@ static int graft_create(struct net *net, struct socket *sock,
 	sock_init_data(sock, sk);
 
 	gsk = graft_sk(sk);
+
 	gsk->sock = sock;
 	gsk->hsock = NULL;
-	gsk->saddr_gr.sgr_family = AF_GRAFT;
+	memset(&gsk->saddr_gr, 0, sizeof(gsk->saddr_gr));
+
+	gsk->graft_so_delayed = 0;
+	gsk->graft_name_trans = 0;
+	spin_lock_init(&gsk->sso_lock);
+	for (n = 0; n < GRAFT_SSO_MAX; n++)
+		gsk->sso[n] = NULL;
 
 	/* NOTE:
 	 * When graft socket is created, the address family used to open
