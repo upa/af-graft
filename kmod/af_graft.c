@@ -303,14 +303,15 @@ struct graft_sock {
 	int kern;
 
 	struct sockaddr_gr saddr_gr;	/* the name of this graft socket */
-	struct sockaddr_storage ep;	/* actual endpoint in the host */
 
 	struct socket *sock;	/* this socket */
 	struct socket *hsock;	/* socket with original family at host */
 
 	/* setsockopt() related */
-	spinlock_t sso_lock;
 	int graft_so_delayed;
+	int graft_name_trans;
+
+	spinlock_t sso_lock;
 	struct graft_sso *sso[GRAFT_SSO_MAX];
 };
 
@@ -613,10 +614,7 @@ static int graft_getname(struct socket *sock, struct sockaddr *addr,
 	struct graft_sock *gsk = graft_sk(sock->sk);
 	struct socket *hsock = graft_hsock(gsk);
 
-	if (peer) {
-		/* graft socket (currently) does not have any peer.
-		 * connection semantics are handled by host sockets.
-		 */
+	if (peer || gsk->graft_name_trans) {
 		if (hsock)
 			return hsock->ops->getname(hsock, addr,
 						   sockaddr_len, peer);
@@ -625,12 +623,9 @@ static int graft_getname(struct socket *sock, struct sockaddr *addr,
 			return -EADDRNOTAVAIL;
 		}
 	} else {
-		/* getsockname() for this socket.
-		 * this (currently) returns sockaddr_gr.
-		 */
+		/* getsockname() and GRAFT_NAME_TRANSPARENT off */
 		memcpy(addr, &gsk->saddr_gr, sizeof(gsk->saddr_gr));
 		*sockaddr_len = sizeof(gsk->saddr_gr);
-		return 0;
 	}
 
 	return 0;
@@ -709,10 +704,16 @@ static int graft_setsockopt(struct socket *sock, int level,
 
 	spin_lock_bh(&gsk->sso_lock);
 
+#define opt_check(optval, optlen, len) ((optval) && (optlen) <= (len))
+
 	if (level == IPPROTO_GRAFT) {
 		/* setsockopt for this graft socket */
 		switch (optname) {
 		case GRAFT_SO_DELAYED:
+			if (!opt_check(optval, optlen, sizeof(int))) {
+				ret = -EINVAL;
+				goto out;
+			}
 			get_user(val, (int __user *)optval);
 			gsk->graft_so_delayed = (val > 0) ? 1: 0;
 			break;
@@ -722,7 +723,7 @@ static int graft_setsockopt(struct socket *sock, int level,
 			break;
 
 		case GRAFT_SO_TRANSPARENT:
-			if (optlen < GRAFT_SSO_TRANS_SIZE) {
+			if (!opt_check(optval, optlen, GRAFT_SSO_TRANS_SIZE)) {
 				ret = -EINVAL;
 				goto out;
 			}
@@ -741,6 +742,15 @@ static int graft_setsockopt(struct socket *sock, int level,
 						      t->optval,
 						      t->optlen);
 			}
+			break;
+
+		case GRAFT_NAME_TRANSPARENT:
+			if (!opt_check(optval, optlen, sizeof(int))) {
+				ret = -EINVAL;
+				goto out;
+			}
+			get_user(val, (int __user *)optval);
+			gsk->graft_name_trans = (val > 0) ? 1: 0;
 			break;
 
 		default:
@@ -796,6 +806,12 @@ static int graft_getsockopt(struct socket *sock, int level,
 
 		case GRAFT_SO_DELAYED_RESULT:
 			ret = graft_sso_delayed_result(gsk, optval, optlen);
+			break;
+
+		case GRAFT_NAME_TRANSPARENT:
+			put_user(sizeof(int), optlen);
+			copy_to_user(optval, &gsk->graft_name_trans,
+				     sizeof(int));
 			break;
 
 		default:

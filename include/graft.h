@@ -41,6 +41,7 @@ struct sockaddr_gr {
 #define GRAFT_SO_DELAYED_EXECUTE	2
 #define GRAFT_SO_DELAYED_RESULT		3
 #define GRAFT_SO_TRANSPARENT		4
+#define GRAFT_NAME_TRANSPARENT		5
 /*
  * - GRAFT_SO_DELAYED: optval is int, default is 0 (off)
  *
@@ -103,6 +104,15 @@ struct graft_sso_trans {
 	/* optval continues here */
 } __attribute__((__packed__));
 #define GRAFT_SSO_TRANS_SIZE	128	/* max size include optval */
+
+/*
+ * - GRAFT_NAME_TRANSPARENT: optval is int, default 0 (off)
+ *
+ * When this option is on, getsockname() returns the name of host
+ * socket. If it is 0, getsockname() returns the name of the graft
+ * socket (struct sockaddr_gr).
+ */
+
 
 
 /* Generic Netlink AF_GRAFT definition */
