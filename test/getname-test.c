@@ -70,7 +70,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 		
-	p("getsockname for unbound graft socket");
+	p("= Try getsockname for unbound graft socket");
 	len = sizeof(s);
 	memset(&s, 0, len);
 	ret = getsockname(sock, (struct sockaddr *)&s, &len);
@@ -81,7 +81,7 @@ int main(int argc, char **argv)
 	print_saddr((struct sockaddr *)&s, len);
 	
 	p("");
-	p("bind() socket to %s", argv[1]);
+	p("= Call bind() socket to %s", argv[1]);
 	memset(&sgr, 0, sizeof(sgr));
 	sgr.sgr_family = AF_GRAFT;
 	strncpy(sgr.sgr_epname, argv[1], AF_GRAFT_EPNAME_MAX);
@@ -92,7 +92,7 @@ int main(int argc, char **argv)
 	}
 
 	p("");
-	p("getsockname for bind()ed graft socket");
+	p("= Try getsockname for bind()ed graft socket");
 	len = sizeof(s);
 	memset(&s, 0, len);
 	ret = getsockname(sock, (struct sockaddr *)&s, &len);
@@ -104,7 +104,7 @@ int main(int argc, char **argv)
 
 
 	p("");
-	p("setsockopt GRAFT_NAME_TRANSPARENT");
+	p("= Set setsockopt GRAFT_NAME_TRANSPARENT on");
 	val = 1;
 	ret = setsockopt(sock, IPPROTO_GRAFT, GRAFT_NAME_TRANSPARENT,
 			 &val, sizeof(val));
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
 
 
 	p("");
-	p("getsockname for bind()ed graft socket Again.");
+	p("= Try getsockname for bind()ed graft socket Again.");
 	len = sizeof(s);
 	memset(&s, 0, len);
 	ret = getsockname(sock, (struct sockaddr *)&s, &len);
@@ -128,7 +128,7 @@ int main(int argc, char **argv)
 	
 
 	p("");
-	p("setsockopt GRAFT_NAME_TRANSPARENT off");
+	p("= Set setsockopt GRAFT_NAME_TRANSPARENT off");
 	val = 0;
 	ret = setsockopt(sock, IPPROTO_GRAFT, GRAFT_NAME_TRANSPARENT,
 			 &val, sizeof(val));
@@ -139,7 +139,7 @@ int main(int argc, char **argv)
 
 
 	p("");
-	p("getsockname for bind()ed graft socket Again.");
+	p("= Try getsockname for bind()ed graft socket Again.");
 	len = sizeof(s);
 	memset(&s, 0, len);
 	ret = getsockname(sock, (struct sockaddr *)&s, &len);

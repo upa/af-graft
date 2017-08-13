@@ -802,9 +802,8 @@ static int graft_getsockopt(struct socket *sock, int level,
 		/* getsockopt for this graft socket */
 		switch (optname) {
 		case GRAFT_SO_DELAYED:
+			put_user(gsk->graft_so_delayed, (int *)optval);
 			put_user(sizeof(int), optlen);
-			copy_to_user(optval, &gsk->graft_so_delayed,
-				     sizeof(int));
 			break;
 
 		case GRAFT_SO_DELAYED_RESULT:
@@ -812,9 +811,8 @@ static int graft_getsockopt(struct socket *sock, int level,
 			break;
 
 		case GRAFT_NAME_TRANSPARENT:
+			put_user(gsk->graft_name_trans, (int *)optval);
 			put_user(sizeof(int), optlen);
-			copy_to_user(optval, &gsk->graft_name_trans,
-				     sizeof(int));
 			break;
 
 		default:

@@ -17,23 +17,37 @@ int sso(int sock, int level, int optname, void *optval, socklen_t optlen)
 {
 	int ret;
 
-	p("call level=%d, opt=%d", level, optname);
+	p("setsockopt call level=%d, opt=%d", level, optname);
 	ret = setsockopt(sock, level, optname, optval, optlen);
 	if (ret < 0) {
 		pr_e("setsockopt failed ret=%d: %s", ret, strerror(errno));
 	}
 	
 	p("setsockopt returns %d", ret);
-	p("");
 	return ret;
 }
+
+int gso(int sock, int level, int optname, void *optval, socklen_t *optlen)
+{
+	int ret;
+
+	p("getsockopt call level=%d, opt=%d", level, optname);
+	ret = getsockopt(sock, level, optname, optval, optlen);
+	if (ret < 0) {
+		pr_e("getsockopt failed ret=%d: %s", ret, strerror(errno));
+	}
+
+	p("getsockopt returns %d", ret);
+	return ret;
+}
+
 
 
 
 int main(int argc, char **argv)
 {
 	int sock, val, ret, n;
-	unsigned int len;
+	socklen_t len;
 	struct graft_sso_trans *t;
 	struct graft_sso_result *r;
 	struct sockaddr_gr sgr;
@@ -47,20 +61,29 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	p("enable delayed execution");
+	p("= Enable delayed execution");
+	ret = gso(sock, IPPROTO_GRAFT, GRAFT_SO_DELAYED, &val, &len);
+	p("getsockopt GRAFT_SO_DELAYED value is %d", val);
+
 	val = 1;
 	ret = sso(sock, IPPROTO_GRAFT, GRAFT_SO_DELAYED, &val, sizeof(val));
 
-	p("SO_REUSEADDR through GRAFT_SO_TRANSPARENT");
+	ret = gso(sock, IPPROTO_GRAFT, GRAFT_SO_DELAYED, &val, &len);
+	p("getsockopt GRAFT_SO_DELAYED value is %d", val);
+	p("");
+
+
+	p("= Set SO_REUSEADDR through GRAFT_SO_TRANSPARENT");
 	val = 1;
 	t->level = SOL_SOCKET;
 	t->optname = SO_REUSEADDR;
 	t->optlen = sizeof(val);
 	memcpy(t->optval, &val, sizeof(val));
 	ret = sso(sock, IPPROTO_GRAFT, GRAFT_SO_TRANSPARENT, t, sizeof(buf));
+	p("");
 
 
-	p("gogo bind!");
+	p("= Gogo bind!");
 	if (!argv[1]) {
 		pr_e("to test bind(), specified epname in argv[1]");
 		goto out;
@@ -73,9 +96,10 @@ int main(int argc, char **argv)
 		pr_e("bind() failed: %s", strerror(errno));
 	}
 	p("bind success!!");
+	p("");
 
 
-	p("Check GRAFT_SO_DELAYED_RESULT");
+	p("= Check GRAFT_SO_DELAYED_RESULT");
 	memset(buf, 0, sizeof(buf));
 	len = sizeof(buf);
 
@@ -94,9 +118,10 @@ int main(int argc, char **argv)
 		  r->level, r->optname, r->ret);
 		r += 1;
 	}
+	p("");
 
 
-	p("Check GRAFT_SO_DELAYED_RESULT again");
+	p("= Check GRAFT_SO_DELAYED_RESULT again");
 	memset(buf, 0, sizeof(buf));
 	len = sizeof(buf);
 
