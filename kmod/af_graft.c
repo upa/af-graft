@@ -450,8 +450,7 @@ static int graft_sso_delayed_result(struct graft_sock *gsk,
 		totlen += res_siz;
 		ptr += res_siz;
 		len -= res_siz;
-		kfree(sso->optval);
-		kfree(sso);
+		graft_sso_free(sso);
 		gsk->sso[n] = NULL;
 	}
 
@@ -785,6 +784,7 @@ static int graft_getsockopt(struct socket *sock, int level,
 	pr_debug("%s: level %d, optname %d\n", __func__, level, optname);
 
 	spin_lock_bh(&gsk->sso_lock);
+
 	if (level == IPPROTO_GRAFT) {
 		/* getsockopt for this graft socket */
 		switch (optname) {
@@ -814,7 +814,7 @@ static int graft_getsockopt(struct socket *sock, int level,
 		}
 	}
 
-	spin_lock_bh(&gsk->sso_lock);
+	spin_unlock_bh(&gsk->sso_lock);
 
 	return ret;
 }

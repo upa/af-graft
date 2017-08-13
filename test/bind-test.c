@@ -9,7 +9,7 @@
 #include <graft.h>
 
 #define PROGNAME "bind-test"
-#include <graft_util.h>
+#include "util.h"
 
 
 

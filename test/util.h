@@ -3,6 +3,8 @@
 
 
 
+#define p(fmt, ...) fprintf(stdout, fmt "\n", ##__VA_ARGS__)
+
 #define pr(fmt, ...) fprintf(stderr,                                  \
 			     PROGNAME ":%d:%s(): " fmt "\n",	      \
 			     __LINE__, __func__, ##__VA_ARGS__)
