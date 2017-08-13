@@ -281,7 +281,7 @@ static void print_ep(struct graft_genl_endpoint *graft_ep)
 	case AF_UNIX:
 		saddr_un = (struct sockaddr_un *)&graft_ep->saddr;
 		printf("type unix ");
-		printf("%s ", saddr_un->sun_path);
+		printf("path %s ", saddr_un->sun_path);
 		break;
 
 	default:
