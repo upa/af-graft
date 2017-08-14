@@ -38,14 +38,7 @@ struct graft_endpoint {
 	struct rcu_head		rcu;
 
 	struct net 		*net;		/* netns of this end point */
-
-	/* TODO: wrap these params in struct graft_genl_endpoint */
-	char	epname[AF_GRAFT_EPNAME_MAX];
-	char	netns_path[UNIX_PATH_MAX];	/* netns mount point */
-	int	netns_fd;	/* fd of end point netns */
-	int	netns_pid;	/* pid of end point netns */
-	int	addrlen;	/* length of actual saddr */
-	struct sockaddr_storage saddr;	/* actual endpoint in the host */
+	struct graft_genl_endpoint	genl_ep;
 };
 
 
@@ -55,7 +48,8 @@ static struct graft_endpoint *graft_find_ep(struct graft_net *graft,
 	struct graft_endpoint *ep;
 
 	list_for_each_entry_rcu(ep, &graft->ep_list, list) {
-		if (strncmp(ep->epname, epname, AF_GRAFT_EPNAME_MAX) == 0)
+		if (strncmp(ep->genl_ep.name, epname,
+			    AF_GRAFT_EPNAME_MAX) == 0)
 			return ep;
 	}
 
@@ -63,7 +57,7 @@ static struct graft_endpoint *graft_find_ep(struct graft_net *graft,
 }
 
 static int graft_add_ep(struct graft_net *graft,
-			struct graft_genl_endpoint *graft_ep)
+			struct graft_genl_endpoint *genl_ep)
 
 {
 	bool found = false;
@@ -76,30 +70,25 @@ static int graft_add_ep(struct graft_net *graft,
 		return -ENOMEM;
 
 	memset(ep, 0, sizeof(*ep));
-	strncpy(ep->epname, graft_ep->epname, AF_GRAFT_EPNAME_MAX);
-	strncpy(ep->netns_path, graft_ep->netns_path, UNIX_PATH_MAX);
-	ep->netns_fd	= graft_ep->netns_fd;
-	ep->netns_pid	= graft_ep->netns_pid;
-	ep->addrlen	= graft_ep->addrlen;
-	ep->saddr	= graft_ep->saddr;
+	ep->genl_ep = *genl_ep;
 
-	if (ep->netns_fd > 0)
-		ep_net = get_net_ns_by_fd(ep->netns_fd);
-	else if (ep->netns_pid > 0)
-		ep_net = get_net_ns_by_pid(ep->netns_pid);
+	if (ep->genl_ep.netns_fd > 0)
+		ep_net = get_net_ns_by_fd(ep->genl_ep.netns_fd);
+	else if (ep->genl_ep.netns_pid > 0)
+		ep_net = get_net_ns_by_pid(ep->genl_ep.netns_pid);
 	else
 		ep_net = get_net(&init_net);
-	ep->net = ep_net;
 
 	if (IS_ERR(ep_net)) {
 		pr_debug("%s: invalid netns\n", __func__);
 		kfree(ep);
 		return PTR_ERR(ep_net);
 	}
+	ep->net = ep_net;
 
 	/* not needed, but i want to sort. */
 	list_for_each_entry_rcu(next, &graft->ep_list, list) {
-		if (strncmp(ep->epname, next->epname,
+		if (strncmp(ep->genl_ep.name, next->genl_ep.name,
 			    AF_GRAFT_EPNAME_MAX) < 0) {
 			found = true;
 			break;
@@ -211,24 +200,24 @@ static int graft_nl_add_ep(struct sk_buff *skb, struct genl_info *info)
 	struct net *net = sock_net(skb->sk);
 	struct graft_net *graft = net_generic(net, graft_net_id);
 	struct graft_endpoint *ep;
-	struct graft_genl_endpoint graft_ep;
+	struct graft_genl_endpoint genl_ep;
 
 	if (!info->attrs[AF_GRAFT_ATTR_ENDPOINT])
 		return -EINVAL;
 
-	nla_memcpy(&graft_ep, info->attrs[AF_GRAFT_ATTR_ENDPOINT],
-		   sizeof(graft_ep));
+	nla_memcpy(&genl_ep, info->attrs[AF_GRAFT_ATTR_ENDPOINT],
+		   sizeof(genl_ep));
 
-	if (graft_ep.epname[0] == '\0') {
+	if (genl_ep.name[0] == '\0') {
 		/* never allow NULL name endpoint. */
 		return -EINVAL;
 	}
 
-	ep = graft_find_ep(graft, graft_ep.epname);
+	ep = graft_find_ep(graft, genl_ep.name);
 	if (ep)
 		return -EEXIST;
 
-	ret = graft_add_ep(graft, &graft_ep);
+	ret = graft_add_ep(graft, &genl_ep);
 	if (ret < 0)
 		return ret;
 
@@ -240,15 +229,15 @@ static int graft_nl_del_ep(struct sk_buff *skb, struct genl_info *info)
 	struct net *net = sock_net(skb->sk);
 	struct graft_net *graft = net_generic(net, graft_net_id);
 	struct graft_endpoint *ep;
-	struct graft_genl_endpoint graft_ep;
+	struct graft_genl_endpoint genl_ep;
 
 	if (!info->attrs[AF_GRAFT_ATTR_ENDPOINT])
 		return -EINVAL;
 
-	nla_memcpy(&graft_ep, info->attrs[AF_GRAFT_ATTR_ENDPOINT],
-		   sizeof(graft_ep));
+	nla_memcpy(&genl_ep, info->attrs[AF_GRAFT_ATTR_ENDPOINT],
+		   sizeof(genl_ep));
 
-	ep = graft_find_ep(graft, graft_ep.epname);
+	ep = graft_find_ep(graft, genl_ep.name);
 	if (!ep)
 		return -ENOENT;
 
@@ -261,7 +250,7 @@ static int graft_nl_send_ep(struct sk_buff *skb, u32 portid, u32 seq,
 			    int flags, struct graft_endpoint *ep)
 {
 	void *hdr;
-	struct graft_genl_endpoint graft_ep;
+	struct graft_genl_endpoint genl_ep;
 
 	hdr = genlmsg_put(skb, portid, seq, &graft_nl_family, flags,
 			  AF_GRAFT_CMD_GET_ENDPOINT);
@@ -269,14 +258,9 @@ static int graft_nl_send_ep(struct sk_buff *skb, u32 portid, u32 seq,
 	if (!hdr)
 		return -EMSGSIZE;
 
-	strncpy(graft_ep.epname, ep->epname, AF_GRAFT_EPNAME_MAX);
-	strncpy(graft_ep.netns_path, ep->netns_path, UNIX_PATH_MAX);
-	graft_ep.netns_fd	= ep->netns_fd;
-	graft_ep.netns_pid	= ep->netns_pid;
-	graft_ep.saddr		= ep->saddr;
-	graft_ep.addrlen	= ep->addrlen;
+	genl_ep = ep->genl_ep;
 
-	if (nla_put(skb, AF_GRAFT_ATTR_ENDPOINT, sizeof(graft_ep), &graft_ep))
+	if (nla_put(skb, AF_GRAFT_ATTR_ENDPOINT, sizeof(genl_ep), &genl_ep))
 		goto nla_put_failure;
 
 	genlmsg_end(skb, hdr);
@@ -561,7 +545,7 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 
 
 	/* 2. create a host socket in specified or default netns */
-	ret = __sock_create(ep->net, ep->saddr.ss_family,
+	ret = __sock_create(ep->net, ep->genl_ep.saddr.ss_family,
 			    gsk->type, gsk->protocol, &gsk->hsock, gsk->kern);
 	if (ret < 0)  {
 		pr_err("%s: failed to create a socket on default netns\n",
@@ -581,15 +565,15 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 
 	/* 4. bind() the host socket into the endpoint */
 	ret = gsk->hsock->ops->bind(gsk->hsock,
-				    (struct sockaddr *)&ep->saddr,
-				    ep->addrlen);
+				    (struct sockaddr *)&ep->genl_ep.saddr,
+				    ep->genl_ep.addrlen);
 	if (ret) {
 		pr_debug("%s: hsock->ops->bind() faied, ret=%d\n",
 			 __func__, ret);
 		return ret;
 	}
 
-	pr_debug("%s: bind to %s\n", __func__, ep->epname);
+	pr_debug("%s: bind to %s\n", __func__, ep->genl_ep.name);
 
 	return 0;
 }

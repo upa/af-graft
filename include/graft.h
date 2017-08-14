@@ -135,7 +135,7 @@ enum {
 /* genl attrs */
 
 struct graft_genl_endpoint {
-	char	epname[AF_GRAFT_EPNAME_MAX];	/* end point name */
+	char	name[AF_GRAFT_EPNAME_MAX];	/* end point name */
 
 	char	netns_path[UNIX_PATH_MAX];	/* netns mount point */
 	int	netns_fd;	/* fd of end point netns */
