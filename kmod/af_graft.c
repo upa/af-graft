@@ -37,8 +37,14 @@ struct graft_endpoint {
 	struct list_head	list;
 	struct rcu_head		rcu;
 
-	char			epname[AF_GRAFT_EPNAME_MAX];
-	int			addrlen;	/* length of actual saddr */
+	struct net 		*net;		/* netns of this end point */
+
+	/* TODO: wrap these params in struct graft_genl_endpoint */
+	char	epname[AF_GRAFT_EPNAME_MAX];
+	char	netns_path[UNIX_PATH_MAX];	/* netns mount point */
+	int	netns_fd;	/* fd of end point netns */
+	int	netns_pid;	/* pid of end point netns */
+	int	addrlen;	/* length of actual saddr */
 	struct sockaddr_storage saddr;	/* actual endpoint in the host */
 };
 
@@ -56,22 +62,40 @@ static struct graft_endpoint *graft_find_ep(struct graft_net *graft,
 	return NULL;
 }
 
-static int graft_add_ep(struct graft_net *graft, char *epname,
-			struct sockaddr_storage saddr, int addrlen)
+static int graft_add_ep(struct graft_net *graft,
+			struct graft_genl_endpoint *graft_ep)
 
 {
 	bool found = false;
+	struct net *ep_net;
 	struct graft_endpoint *ep, *next;
 
 	ep = (struct graft_endpoint *)kmalloc(sizeof(struct graft_endpoint),
 					      GFP_KERNEL);
 	if (!ep)
 		return -ENOMEM;
-	memset(ep, 0, sizeof(*ep));
 
-	strncpy(ep->epname, epname, AF_GRAFT_EPNAME_MAX);
-	ep->addrlen = addrlen;
-	ep->saddr = saddr;
+	memset(ep, 0, sizeof(*ep));
+	strncpy(ep->epname, graft_ep->epname, AF_GRAFT_EPNAME_MAX);
+	strncpy(ep->netns_path, graft_ep->netns_path, UNIX_PATH_MAX);
+	ep->netns_fd	= graft_ep->netns_fd;
+	ep->netns_pid	= graft_ep->netns_pid;
+	ep->addrlen	= graft_ep->addrlen;
+	ep->saddr	= graft_ep->saddr;
+
+	if (ep->netns_fd > 0)
+		ep_net = get_net_ns_by_fd(ep->netns_fd);
+	else if (ep->netns_pid > 0)
+		ep_net = get_net_ns_by_pid(ep->netns_pid);
+	else
+		ep_net = get_net(&init_net);
+	ep->net = ep_net;
+
+	if (IS_ERR(ep_net)) {
+		pr_debug("%s: invalid netns\n", __func__);
+		kfree(ep);
+		return PTR_ERR(ep_net);
+	}
 
 	/* not needed, but i want to sort. */
 	list_for_each_entry_rcu(next, &graft->ep_list, list) {
@@ -91,6 +115,7 @@ static int graft_add_ep(struct graft_net *graft, char *epname,
 
 static void graft_del_ep(struct graft_endpoint *ep)
 {
+	put_net(ep->net);
 	list_del_rcu(&ep->list);
 	kfree_rcu(ep, rcu);
 }
@@ -111,10 +136,16 @@ static __net_exit void graft_exit_net(struct net *net)
 	struct graft_net *graft = net_generic(net, graft_net_id);
 	struct graft_endpoint *ep, *next;
 
+	pr_info("%s\n", __func__);
+
 	rcu_read_lock();
+
+	/* find end points binding to this netns, and remove them */
 	list_for_each_entry_safe(ep, next, &graft->ep_list, list) {
 		graft_del_ep(ep);
 	}
+
+	/* delete all entries in this net */
 	rcu_read_unlock();
 
 	return;
@@ -197,8 +228,7 @@ static int graft_nl_add_ep(struct sk_buff *skb, struct genl_info *info)
 	if (ep)
 		return -EEXIST;
 
-	ret = graft_add_ep(graft, graft_ep.epname,
-			   graft_ep.saddr, graft_ep.addrlen);
+	ret = graft_add_ep(graft, &graft_ep);
 	if (ret < 0)
 		return ret;
 
@@ -240,7 +270,11 @@ static int graft_nl_send_ep(struct sk_buff *skb, u32 portid, u32 seq,
 		return -EMSGSIZE;
 
 	strncpy(graft_ep.epname, ep->epname, AF_GRAFT_EPNAME_MAX);
-	graft_ep.saddr = ep->saddr;
+	strncpy(graft_ep.netns_path, ep->netns_path, UNIX_PATH_MAX);
+	graft_ep.netns_fd	= ep->netns_fd;
+	graft_ep.netns_pid	= ep->netns_pid;
+	graft_ep.saddr		= ep->saddr;
+	graft_ep.addrlen	= ep->addrlen;
 
 	if (nla_put(skb, AF_GRAFT_ATTR_ENDPOINT, sizeof(graft_ep), &graft_ep))
 		goto nla_put_failure;
@@ -525,11 +559,9 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	if (!ep)
 		return -ENOENT;
 
-	memcpy(&gsk->saddr_gr, uaddr, addrlen); /* save for getname */
 
-
-	/* 2. create a host socket */
-	ret = __sock_create(get_net(&init_net), ep->saddr.ss_family,
+	/* 2. create a host socket in specified or default netns */
+	ret = __sock_create(ep->net, ep->saddr.ss_family,
 			    gsk->type, gsk->protocol, &gsk->hsock, gsk->kern);
 	if (ret < 0)  {
 		pr_err("%s: failed to create a socket on default netns\n",
@@ -537,6 +569,8 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		gsk->hsock = NULL;
 		return ret;
 	}
+
+	memcpy(&gsk->saddr_gr, uaddr, addrlen); /* save for getname */
 
 
 	/* 3. execute delayed setsockopt() */

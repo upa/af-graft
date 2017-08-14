@@ -19,6 +19,7 @@
 #include "libgenl.h"
 #include "utils.h"
 #include "ip_common.h"
+#include "namespace.h"
 
 
 static struct rtnl_handle genl_rth;
@@ -29,6 +30,11 @@ static void usage(void) __attribute__((noreturn));
 
 struct graft_param {
 	char		name[AF_GRAFT_EPNAME_MAX];
+
+	char		netns_path[UNIX_PATH_MAX];	/* netns mount point */
+	int		fd;	/* fd of end point netns */
+	int		pid;	/* pid of end point netns */
+
 	int		family;
 	struct in_addr	addr4;
 	struct in6_addr	addr6;
@@ -44,6 +50,7 @@ void usage(void)
 		"Usage: ip graft add NAME\n"
 		"          type { ipv4 | ipv6 } addr ADDR port PORT\n"
 		"          type unix path PATH\n"
+		"          [ netns { PID | NETNSNAME } ]\n"
 		"\n"
 		"       ip graft del NAME\n"
 		"\n"
@@ -62,6 +69,7 @@ void usage(void)
 static int parse_args(int argc, char **argv, struct graft_param *p)
 {
 	int rc;
+	int netns;
 	memset(p, 0, sizeof(struct graft_param));
 
 	if (argc < 1)
@@ -83,7 +91,19 @@ static int parse_args(int argc, char **argv, struct graft_param *p)
 
 	while(argc > 0) {
 
-		if (strcmp(*argv, "type") == 0) {
+		if (strcmp(*argv, "netns") == 0) {
+
+			NEXT_ARG();
+			strncpy(p->netns_path, *argv, UNIX_PATH_MAX);
+			netns = netns_get_fd(*argv);
+			if (netns > 0)
+				p->fd = netns;
+			else if (get_integer(&netns, *argv, 0) == 0)
+				p->pid = netns;
+			else
+				invarg("Invalid \"netns\" value\n", *argv);
+
+		} else if (strcmp(*argv, "type") == 0) {
 
 			NEXT_ARG();
 			if (strncmp(*argv, "ipv4", 4) == 0)
@@ -169,6 +189,9 @@ static int do_add(int argc, char **argv)
 
 	memset(&graft_ep, 0, sizeof(graft_ep));
 	strncpy(graft_ep.epname, p.name, AF_GRAFT_EPNAME_MAX);
+	strncpy(graft_ep.netns_path, p.netns_path, UNIX_PATH_MAX);
+	graft_ep.netns_fd = p.fd;
+	graft_ep.netns_pid = p.pid;
 	
 	switch(p.family) {
 	case AF_INET :
@@ -287,6 +310,11 @@ static void print_ep(struct graft_genl_endpoint *graft_ep)
 	default:
 		printf("type unknown ");
 	}
+
+	if (graft_ep->netns_fd > 0)
+		printf("netns %s ", graft_ep->netns_path);
+	else if (graft_ep->netns_pid > 0)
+		printf("netns %d ", graft_ep->netns_pid);
 
 	printf("\n");
 }

@@ -4,6 +4,7 @@
 #define _GRAFT_H_
 
 #include <linux/socket.h>	/* __kernel_sa_family_t */
+#include <linux/un.h>		/* UNIX_PATH_MAX */
 #include <linux/if.h>		/* IFNAMSIZ */
 
 #define GRAFT_VERSION "0.0.1"
@@ -135,9 +136,15 @@ enum {
 
 struct graft_genl_endpoint {
 	char	epname[AF_GRAFT_EPNAME_MAX];	/* end point name */
+
+	char	netns_path[UNIX_PATH_MAX];	/* netns mount point */
+	int	netns_fd;	/* fd of end point netns */
+	int	netns_pid;	/* pid of end point netns */
+	/* if both are 0, use default namespace. priority fd > pid */
+
 	ssize_t			addrlen;	/* length of actual saddr */
 	struct sockaddr_storage saddr;		/* host bind() end point */
-};
+} __attribute__((__packed__));
 
 enum {
 	AF_GRAFT_ATTR_NONE,
