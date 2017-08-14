@@ -91,19 +91,7 @@ static int parse_args(int argc, char **argv, struct graft_param *p)
 
 	while(argc > 0) {
 
-		if (strcmp(*argv, "netns") == 0) {
-
-			NEXT_ARG();
-			strncpy(p->netns_path, *argv, UNIX_PATH_MAX);
-			netns = netns_get_fd(*argv);
-			if (netns > 0)
-				p->fd = netns;
-			else if (get_integer(&netns, *argv, 0) == 0)
-				p->pid = netns;
-			else
-				invarg("Invalid \"netns\" value\n", *argv);
-
-		} else if (strcmp(*argv, "type") == 0) {
+		if (strcmp(*argv, "type") == 0) {
 
 			NEXT_ARG();
 			if (strncmp(*argv, "ipv4", 4) == 0)
@@ -152,6 +140,18 @@ static int parse_args(int argc, char **argv, struct graft_param *p)
 
 			NEXT_ARG();
 			strncpy(p->path, *argv, UNIX_PATH_MAX);
+
+		} else if (strcmp(*argv, "netns") == 0) {
+
+			NEXT_ARG();
+			strncpy(p->netns_path, *argv, UNIX_PATH_MAX);
+			netns = netns_get_fd(*argv);
+			if (netns > 0)
+				p->fd = netns;
+			else if (get_integer(&netns, *argv, 0) == 0)
+				p->pid = netns;
+			else
+				invarg("Invalid \"netns\" value\n", *argv);
 
 		} else {
 			fprintf(stderr,
