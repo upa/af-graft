@@ -71,8 +71,7 @@ int parse_addrconv(char *var, struct list_head *list)
 	char *p, *a;
 	struct addrconv *ac, *tmp;
 
-	do {
-		p = strtok(var, " ");
+	for (p = strtok(var, " "); p != NULL; p = strtok(NULL, " ")) {
 		if (p) {
 			ac = (struct addrconv *)malloc(sizeof(*ac));
 			memset(ac, 0, sizeof(*ac));
@@ -80,7 +79,7 @@ int parse_addrconv(char *var, struct list_head *list)
 			list_add(&ac->list, list);
 			cnt++;
 		}
-	} while(p == NULL);
+	}
 
 	/* convert ac->air to addr and epname */
 	list_for_each_entry_safe(ac, tmp, list, list) {
@@ -95,12 +94,13 @@ int parse_addrconv(char *var, struct list_head *list)
 
 		if (inet_pton(AF_INET, a, &ac->addr) == 1)
 			ac->family = AF_INET;
-		else if (inet_pton(AF_INET, a, &ac->addr) == 1)
+		else if (inet_pton(AF_INET6, a, &ac->addr) == 1)
 			ac->family = AF_INET6;
 		else {
 			pr_e("invalid address %s", ac->pair);
 			list_del(&ac->list);
 			free(ac);
+			ac = NULL;
 			cnt--;
 		}
 	}
@@ -108,6 +108,15 @@ int parse_addrconv(char *var, struct list_head *list)
 	return cnt;
 }
 
+void free_addrconv(struct list_head *list)
+{
+	struct addrconv *ac, *tmp;
+
+	list_for_each_entry_safe(ac, tmp, list, list) {
+		list_del(&ac->list);
+		free(ac);
+	}
+}
 
 int socket(int domain, int type, int protocol)
 {
@@ -170,7 +179,6 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	if (!converted)
 		return original_bind(fd, addr, addrlen);
 
-
 	/* ok, this is AF_GRAFT converted socket. */
 	str_conv_pairs = getenv("GRAFT_CONV_PAIRS");
 	if (!str_conv_pairs) {
@@ -209,8 +217,11 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 	if (!act) {
 		/* no matched pair */
+		free_addrconv(&addrconv_list);
 		return original_bind(fd, addr, addrlen);
 	}
+
+	free_addrconv(&addrconv_list);
 
 	/* create sockaddr_gr and call bind with it */
 	memset(&sgr, 0, sizeof(sgr));
@@ -219,6 +230,6 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 	pr_s("convert bind %s to %s", act->pair, act->epname);
 
-	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
 
+	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
 }

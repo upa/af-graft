@@ -349,7 +349,8 @@ static inline struct socket *graft_hsock(struct graft_sock *gsk)
 /* setsockopt related functions */
 
 static void graft_sso_free(struct graft_sso *sso) {
-	kfree(sso->optval);
+	if (sso->optval)
+		kfree(sso->optval);
 	kfree(sso);
 }
 
@@ -391,6 +392,10 @@ static int graft_sso_delayed_enqueue(struct graft_sock *gsk,
 	sso->optlen = optlen;
 	if (sso->optval) {
 		sso->optval = kmalloc(optlen, GFP_KERNEL);
+		if (!sso->optval) {
+			graft_sso_free(sso);
+			return -ENOBUFS;
+		}
 		copy_from_user(sso->optval, optval, optlen);
 	} else {
 		sso->optval = NULL;
