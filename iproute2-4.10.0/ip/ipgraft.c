@@ -188,7 +188,7 @@ static int do_add(int argc, char **argv)
 	}
 
 	memset(&graft_ep, 0, sizeof(graft_ep));
-	strncpy(graft_ep.epname, p.name, AF_GRAFT_EPNAME_MAX);
+	strncpy(graft_ep.name, p.name, AF_GRAFT_EPNAME_MAX);
 	strncpy(graft_ep.netns_path, p.netns_path, UNIX_PATH_MAX);
 	graft_ep.netns_fd = p.fd;
 	graft_ep.netns_pid = p.pid;
@@ -255,7 +255,7 @@ static int do_del(int argc, char **argv)
 	}
 
 	memset(&graft_ep, 0, sizeof(graft_ep));
-	strncpy(graft_ep.epname, p.name, AF_GRAFT_EPNAME_MAX);
+	strncpy(graft_ep.name, p.name, AF_GRAFT_EPNAME_MAX);
 
 	GENL_REQUEST(req, 1024, genl_family, 0, AF_GRAFT_GENL_VERSION,
 		     AF_GRAFT_CMD_DEL_ENDPOINT, NLM_F_REQUEST | NLM_F_ACK);
@@ -276,7 +276,7 @@ static void print_ep(struct graft_genl_endpoint *graft_ep)
 	struct sockaddr_in6 *saddr_in6;
 	struct sockaddr_un *saddr_un;
 
-	printf("%s ", graft_ep->epname);
+	printf("%s ", graft_ep->name);
 
 	switch(graft_ep->saddr.ss_family) {
 	case AF_INET:
