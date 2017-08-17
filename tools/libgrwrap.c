@@ -150,7 +150,7 @@ int socket(int domain, int type, int protocol)
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
 	int n, converted = 0;
-	char *str_conv_pairs;
+	char *str_conv_pairs, buf[1024];
 	struct list_head addrconv_list;
 	struct addrconv *ac, *act;
 	struct sockaddr_gr sgr;
@@ -178,8 +178,9 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		return original_bind(fd, addr, addrlen);		
 	}
 	
+	strncpy(buf, str_conv_pairs, sizeof(buf));
 	INIT_LIST_HEAD(&addrconv_list);
-	parse_addrconv(str_conv_pairs, &addrconv_list);
+	parse_addrconv(buf, &addrconv_list);
 	
 	act = NULL;
 	list_for_each_entry(ac, &addrconv_list, list) {
