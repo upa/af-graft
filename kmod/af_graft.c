@@ -125,8 +125,6 @@ static __net_exit void graft_exit_net(struct net *net)
 	struct graft_net *graft = net_generic(net, graft_net_id);
 	struct graft_endpoint *ep, *next;
 
-	pr_info("%s\n", __func__);
-
 	rcu_read_lock();
 
 	/* find end points binding to this netns, and remove them */
@@ -307,9 +305,9 @@ static int graft_nl_dump_ep(struct sk_buff *skb, struct netlink_callback *cb)
 
 /* delayed setsockopt() structure */
 struct graft_sso {
-	char *optval;
 	unsigned int optlen;
 	struct graft_sso_result res;
+	char optval[];
 };
 #define GRAFT_SSO_MAX	64
 
@@ -349,8 +347,6 @@ static inline struct socket *graft_hsock(struct graft_sock *gsk)
 /* setsockopt related functions */
 
 static void graft_sso_free(struct graft_sso *sso) {
-	if (sso->optval)
-		kfree(sso->optval);
 	kfree(sso);
 }
 
@@ -369,37 +365,25 @@ static int wrap_setsockopt(struct socket *sock,
 
 static int graft_sso_delayed_enqueue(struct graft_sock *gsk,
 				     int level, int optname,
-				     char __user *optval, unsigned int optlen)
+				     char *optval, unsigned int optlen)
 {
 	/* call under spin_lock_bh(&gsk->sso_lock); */
 
 	int n;
 	struct graft_sso *sso;
 
-	pr_debug("%s: level=%d, opt=%d\n", __func__, level, optname);
+	pr_debug("%s: level=%d, opt=%d, val=%d\n", __func__, level, optname,
+		 *((int *)optval));
 
-	sso = (struct graft_sso *)kmalloc(sizeof(*sso), GFP_KERNEL);
+	sso = (struct graft_sso *)kmalloc(sizeof(*sso) + optlen, GFP_KERNEL);
 	if (!sso)
 		return -ENOMEM;
-	if (!sso->optval) {
-		kfree(sso);
-		return -ENOMEM;
-	}
 
 	sso->res.ret = 0;
 	sso->res.level = level;
 	sso->res.optname = optname;
 	sso->optlen = optlen;
-	if (sso->optval) {
-		sso->optval = kmalloc(optlen, GFP_KERNEL);
-		if (!sso->optval) {
-			graft_sso_free(sso);
-			return -ENOBUFS;
-		}
-		copy_from_user(sso->optval, optval, optlen);
-	} else {
-		sso->optval = NULL;
-	}
+	memcpy(sso->optval, optval, optlen);
 
 	for (n = 0; n < GRAFT_SSO_MAX; n++) {
 		if (!gsk->sso[n]) {
@@ -721,14 +705,21 @@ static int graft_setsockopt(struct socket *sock, int level,
 			    unsigned int optlen)
 {
 	int val, ret = 0;
-	char buf[GRAFT_SSO_TRANS_SIZE];
+	char *buf;
 	struct graft_sock *gsk = graft_sk(sock->sk);
-	struct graft_sso_trans *t = (struct graft_sso_trans *)buf;
+	struct graft_sso_trans *t;
 
 
 	pr_debug("%s: level %d, optname %d\n", __func__, level, optname);
 
 	spin_lock_bh(&gsk->sso_lock);
+
+	buf = kmalloc(optlen, GFP_KERNEL);
+	if (!buf) {
+		ret = -ENOBUFS;
+		goto kmalloc_out;
+	}
+	copy_from_user(buf, optval, optlen);
 
 #define opt_check(optval, optlen, len) ((optval) && (optlen) <= (len))
 
@@ -753,8 +744,8 @@ static int graft_setsockopt(struct socket *sock, int level,
 				ret = -EINVAL;
 				goto out;
 			}
-			copy_from_user(t, optval, optlen);
 
+			t = (struct graft_sso_trans *)buf;
 			if (gsk->graft_so_delayed) {
 				ret = graft_sso_delayed_enqueue(gsk,
 								t->level,
@@ -775,7 +766,7 @@ static int graft_setsockopt(struct socket *sock, int level,
 				ret = -EINVAL;
 				goto out;
 			}
-			get_user(val, (int __user *)optval);
+			val = *((int *)buf);
 			gsk->graft_name_trans = (val > 0) ? 1: 0;
 			break;
 
@@ -788,23 +779,24 @@ static int graft_setsockopt(struct socket *sock, int level,
 		if (gsk->graft_so_delayed) {
 			/* setsockopt is delayed until bind() or
 			 * GRAFT_SO_DELAYED_EXECUTE is called.
-			 * queueing setsockopt. */
-			ret = graft_sso_delayed_enqueue(gsk, level,
-							optname, optval,
-							optlen);
+			 * queueing this setsockopt. */
+			ret = graft_sso_delayed_enqueue(gsk, level, optname,
+							buf, optlen);
 
 		} else {
 			/* setsockopt is not delayed. call it to host
 			 * socket transparently */
-			ret = wrap_setsockopt(graft_hsock(gsk),
-					      t->level,
-					      t->optname, t->optval,
-					      t->optlen);
+			ret = wrap_setsockopt(graft_hsock(gsk), level, optname,
+					      optval, optlen);
 		}
 	}
 
+
 out:
+	kfree(buf);
+kmalloc_out:
 	spin_unlock_bh(&gsk->sso_lock);
+
 
 	return ret;
 }

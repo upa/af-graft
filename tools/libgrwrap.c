@@ -25,6 +25,8 @@
 static int (*original_socket)(int domain, int type, int protocol);
 static int (*original_bind)(int sockfd, const struct sockaddr *addr,
 			    socklen_t addrlen);
+static int (*original_setsockopt)(int fd, int level, int optname,
+				  const void *optval, socklen_t optlen);
 
 /* Lib Graft Wrapper:
  *
@@ -157,9 +159,6 @@ int socket(int domain, int type, int protocol)
 	return fd;
 }
 
-
-
-
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
 	int n, converted = 0;
@@ -236,4 +235,29 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 
 	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
+}
+
+int setsockopt(int fd, int level, int optname,
+	       const void *optval, socklen_t optlen)
+{
+	/* catch SOL_SOCKET setsockopts and wrap it into graft_sso_trans */
+
+	char buf[GRAFT_SSO_TRANS_SIZE];
+	struct graft_sso_trans *trans;
+
+	original_setsockopt = dlsym(RTLD_NEXT, "setsockopt");
+
+	if (level != SOL_SOCKET)
+		return original_setsockopt(fd, level, optname, optval, optlen);
+
+	/* wrap setsockopt params in graft_sso_trans */
+	memset(buf, 0, sizeof(buf));
+	trans = (struct graft_sso_trans *)buf;
+	trans->level = level;
+	trans->optname = optname;
+	trans->optlen = optlen;
+	memcpy(trans->optval, optval, optlen);
+
+	return original_setsockopt(fd, IPPROTO_GRAFT, GRAFT_SO_TRANSPARENT,
+				   trans, sizeof(buf));
 }
