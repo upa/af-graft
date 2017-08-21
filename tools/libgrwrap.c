@@ -52,8 +52,37 @@ static int (*original_setsockopt)(int fd, int level, int optname,
  */
 
 
-#define MAX_CONVERTED_FDS 16
+#define MAX_CONVERTED_FDS 64
 static int __converted_fds[MAX_CONVERTED_FDS] = {};
+
+static int store_converted_fd(int fd)
+{
+	int n;
+
+	/* store the converted fd number */
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (__converted_fds[n] == 0) {
+			__converted_fds[n] = fd;
+			return 0;
+		}
+	}
+
+	pr_e("over %d converted socckets!", MAX_CONVERTED_FDS);
+	return -1;
+}
+
+static int check_converted_fd(int fd)
+{
+	int n;
+
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (__converted_fds[n] == fd) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
 
 
 /* describing AF_INET/6 into AF_GRAFT address conversion pair */
@@ -126,7 +155,7 @@ void free_addrconv(struct list_head *list)
 
 int socket(int domain, int type, int protocol)
 {
-	int n, fd, ret, val;
+	int fd, ret, val;
 	int new_domain = domain;
 
 	original_socket = dlsym(RTLD_NEXT, "socket");
@@ -151,17 +180,14 @@ int socket(int domain, int type, int protocol)
 		return ret;
 	}
 
-	/* store the converted fd number */
-	for (n = 0; n < MAX_CONVERTED_FDS; n++)
-		if (__converted_fds[n] == 0)
-			__converted_fds[n] = fd;
+	if (store_converted_fd(fd) < 0)
+		return -ENOBUFS;
 
 	return fd;
 }
 
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	int n, converted = 0;
 	char *str_conv_pairs, buf[1024];
 	struct list_head addrconv_list;
 	struct addrconv *ac, *act;
@@ -171,15 +197,8 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 	original_bind = dlsym(RTLD_NEXT, "bind");
 
-	/* check, is fd converted_fd ? */
-	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
-		if (__converted_fds[n] == fd) {
-			converted = 1;
-			break;
-		}
-	}
-
-	if (!converted)
+	/* check, is fd converted AF_GRAFT fd ? */
+	if (!check_converted_fd(fd))
 		return original_bind(fd, addr, addrlen);
 
 	/* ok, this is AF_GRAFT converted socket. */
@@ -247,10 +266,15 @@ int setsockopt(int fd, int level, int optname,
 
 	original_setsockopt = dlsym(RTLD_NEXT, "setsockopt");
 
+	/* check, is fd converted AF_GRAFT fd ? */
+	if (!check_converted_fd(fd))
+		return original_setsockopt(fd, level, optname, optval, optlen);
+
 	if (level != SOL_SOCKET)
 		return original_setsockopt(fd, level, optname, optval, optlen);
 
 	/* wrap setsockopt params in graft_sso_trans */
+	pr_s("wrap setsockopt() level=%d, optname=%d", level, optname);
 	memset(buf, 0, sizeof(buf));
 	trans = (struct graft_sso_trans *)buf;
 	trans->level = level;
