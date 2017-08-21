@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 	
 # setup AF_GRAFT
 RUN cd ${workdir}	\
-	&& git clone https://github.com/upa/af-graft	\
+	&& git clone --depth 1 https://github.com/upa/af-graft	\
 	&& cd af-graft	\
 	&& make
 

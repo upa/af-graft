@@ -15,7 +15,11 @@ Sending build context to Docker daemon   2.56kB
 Step 1/7 : FROM ubuntu:latest
  ---> d355ed3537e9
 
-# ... snipped ...
+# Note that building af_graft.ko in this docker build process fails, but,
+# in containers, the kernel module is not required in containers. Only
+# ip graft command is necessary.
+#
+# ...snipped...
 
 Successfully tagged af-graft:latest
 $ docker images | grep graft
