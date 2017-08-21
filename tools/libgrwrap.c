@@ -18,6 +18,10 @@
 
 #include "list.h"
 
+
+#define GRAFT_CONV_PAIRS_ENV	"GRAFT_CONV_PAIRS"
+
+
 static int (*original_socket)(int domain, int type, int protocol);
 static int (*original_bind)(int sockfd, const struct sockaddr *addr,
 			    socklen_t addrlen);
@@ -41,7 +45,7 @@ static int (*original_bind)(int sockfd, const struct sockaddr *addr,
  * specified end point name.  Then, an actual socket on the specified
  * netns is created and delayed setsockopt()s are executed. Conversion
  * pairs from AF_INET/INET6 addresses into AF_GRAFT end points must be
- * stored in the GRAFT_CONV_PAIRS env valirable. The GRAFT_ECON_EPNAME
+ * stored in the GRAFT_CONV_PAIRS env valirable. The GRAFT_CONV_PAIRS
  * format is "ADDR1=EPNAME1 ADDR2=EPNAME2 ADDR3=EPNAME2 ...".
  */
 
@@ -180,7 +184,7 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		return original_bind(fd, addr, addrlen);
 
 	/* ok, this is AF_GRAFT converted socket. */
-	str_conv_pairs = getenv("GRAFT_CONV_PAIRS");
+	str_conv_pairs = getenv(GRAFT_CONV_PAIRS_ENV);
 	if (!str_conv_pairs) {
 		/* conversion rule is not specified */
 		return original_bind(fd, addr, addrlen);		
