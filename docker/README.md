@@ -42,4 +42,5 @@ Server listening on 5201
 
 ```
 
-To add graft end points, containers requires NET_ADMIN capabilities.
+Containers require NET_ADMIN capability to add graft end points in
+containers' network namespaces.
