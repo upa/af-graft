@@ -2,7 +2,7 @@
 
 iproute2-src = iproute2-4.10.0
 
-subdirs = kmod $(iproute2-src) test
+subdirs = kmod $(iproute2-src) test tools
 
 all:
 	for i in $(subdirs); do \
