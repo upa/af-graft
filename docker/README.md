@@ -2,10 +2,14 @@
 
 ## Build docker images
 
-The `af-graft/docker` directory contains Dockerfile(s) for testing
+`af-graft/docker` directory contains Dockerfile(s) for testing
 AF_GRAFT in docker container environments. `graft` is a simple
 container including AF_GRAFT userland suites and useful utilities
-(iperf3, netperf, ping and vim).
+(iperf3, netperf, ping and vim). `nginx` is a simple container
+including AF_GRAFT and nginx.
+
+
+### `graft` docker image
 
 ```shell-session
 $ git clone https://github.com/upa/af-graft.git
@@ -44,3 +48,17 @@ Server listening on 5201
 
 Containers require NET_ADMIN capability to add graft end points in
 containers' network namespaces.
+
+
+### `nginx` docker image
+
+To build the nginx docker image, `docker build -t af-graft-nginx .` in
+af-graft/docker/nginx directory. The nginx image uses two end points,
+`nx4` and `nx6`, for 0.0.0.0:80 and ::0:80 in GRAFT_CONV_PAIRS. Thus,
+please add graft end points for nx4 and nx6 before executing nginx.
+
+```shell-session
+$ cd af-graft/docker/nginx
+$ docker build -t af-graft-nginx .
+$ docker run -it --cap-add=NET_ADMIN -v `pwd`/default:/etc/nginx/sites-enabled/default af-graft-nginx bash -c "ip gr add nx4 type ipv4 addr 0.0.0.0 port 80 && nginx -g 'daemon off;'"
+```
