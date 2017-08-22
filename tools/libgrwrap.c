@@ -18,7 +18,8 @@
  * netns is created and delayed setsockopt()s are executed. Conversion
  * pairs from AF_INET/INET6 addresses into AF_GRAFT end points must be
  * stored in the GRAFT_CONV_PAIRS env valirable. The GRAFT_CONV_PAIRS
- * format is "ADDR1=EPNAME1 ADDR2=EPNAME2 ADDR3=EPNAME2 ...".
+ * format is "ADDR1:PORT=EPNAME1 ADDR2:PORT=EPNAME2 ...". PORT 0 means
+ * arbitrary port numbers.
  *
  * - 3. hijack setsockopt() to wrap setsockopt in graft_sso_trans
  */
@@ -118,6 +119,7 @@ struct addrconv {
 		struct in_addr addr4;
 		struct in6_addr addr6;
 	} addr;
+	uint16_t port;
 	char *epname;
 };
 
@@ -125,8 +127,8 @@ int parse_addrconv(char *var, struct list_head *list)
 {
 	/* parse GRAFT_CONV_PAIRS in *vars, add struct addrconv to
 	 * *list, and returns the number of parsed pairs */
-	int cnt = 0;
-	char *p, *a;
+	int cnt = 0, n;
+	char *p, *addr, *port;
 	struct addrconv *ac, *tmp;
 
 	for (p = strtok(var, " "); p != NULL; p = strtok(NULL, " ")) {
@@ -139,20 +141,34 @@ int parse_addrconv(char *var, struct list_head *list)
 		}
 	}
 
-	/* convert ac->air to addr and epname */
+	/* convert ac->pair to addr and epname */
 	list_for_each_entry_safe(ac, tmp, list, list) {
-		for (a = ac->pair, p = ac->pair; p != '\0'; p++) {
+
+		addr = ac->pair;
+
+		for (p = ac->pair; p != '\0'; p++) {
 			if (*p == '=') {
-				/* delimiter of ADDR and EPNAME */
+				/* delimiter of ADDR:PORT and EPNAME */
 				*p = '\0';
 				ac->epname = p + 1;
 				break;
 			}
 		}
 
-		if (inet_pton(AF_INET, a, &ac->addr) == 1)
+		for (n = strlen(ac->pair) - 1; n >= 0; n--) {
+			p = ac->pair + n;
+			if (*p == ':') {
+				/* delimiter of ADDR and PORT */
+				*p = '\0';
+				port = p + 1;
+			}
+		}
+
+		ac->port = htons(atoi(port));
+
+		if (inet_pton(AF_INET, addr, &ac->addr) == 1)
 			ac->family = AF_INET;
-		else if (inet_pton(AF_INET6, a, &ac->addr) == 1)
+		else if (inet_pton(AF_INET6, addr, &ac->addr) == 1)
 			ac->family = AF_INET6;
 		else {
 			pr_e("invalid address %s", ac->pair);
@@ -160,6 +176,7 @@ int parse_addrconv(char *var, struct list_head *list)
 			free(ac);
 			ac = NULL;
 			cnt--;
+			continue;
 		}
 	}
 
@@ -245,12 +262,14 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		switch (ac->family) {
 		case AF_INET :
 			sin = (struct sockaddr_in *)addr;
-			if (memcmp(&ac->addr, &sin->sin_addr, 4) == 0)
+			if (memcmp(&ac->addr, &sin->sin_addr, 4) == 0 &&
+			    (ac->port == 0 || ac->port == sin->sin_port))
 				act = ac;
 			break;
 		case AF_INET6:
 			sin6 = (struct sockaddr_in6 *)addr;
-			if (memcmp(&ac->addr, &sin6->sin6_addr, 16) == 0)
+			if (memcmp(&ac->addr, &sin6->sin6_addr, 16) == 0 &&
+			    (ac->port == 0 || ac->port == sin6->sin6_port))
 				act = ac;
 			break;
 		default :
@@ -275,7 +294,8 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	sgr.sgr_family = AF_GRAFT;
 	strncpy(sgr.sgr_epname, act->epname, AF_GRAFT_EPNAME_MAX);
 
-	pr_s("convert bind %s to %s", act->pair, act->epname);
+	pr_s("convert bind %s:%u to %s",
+	     act->pair, ntohs(ac->port), act->epname);
 
 
 	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
