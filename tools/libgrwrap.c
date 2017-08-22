@@ -161,6 +161,7 @@ int parse_addrconv(char *var, struct list_head *list)
 				/* delimiter of ADDR and PORT */
 				*p = '\0';
 				port = p + 1;
+				break;
 			}
 		}
 
