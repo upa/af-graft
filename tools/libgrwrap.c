@@ -359,8 +359,11 @@ static int bind_before_connect(int fd, char *epname)
 	struct sockaddr_storage ss;
 	socklen_t addrlen;
 
+	original_bind = dlsym(RTLD_NEXT, "bind");
+
 	/* check is fd already bind()ed */
 	addrlen = sizeof(ss);
+	memset(&ss, 0, sizeof(ss));
 
 	ret = getsockname(fd, (struct sockaddr *)&ss, &addrlen);
 
@@ -368,14 +371,13 @@ static int bind_before_connect(int fd, char *epname)
 		pr_e("getsockname failed: %s", strerror(errno));
 		return ret;
 	}
-	if (addrlen > 0)
+	if (ss.ss_family != 0)
 		return 0;
 
 	/* ok, this socket is not bind()ed, lets bind() */
 	memset(&sgr, 0, sizeof(sgr));
 	sgr.sgr_family = AF_GRAFT;
 	strncpy(sgr.sgr_epname, epname, AF_GRAFT_EPNAME_MAX);
-
 
 	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
 }
@@ -385,6 +387,8 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	/* call bind() before connect() using GRAFT_BBC */
 	int ret;
 	char *p;
+
+	original_connect = dlsym(RTLD_NEXT, "connect");
 
 	if (!check_graft_enabled() || !check_converted_fd(fd))
 		return original_connect(fd, addr, addrlen);
