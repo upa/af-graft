@@ -22,6 +22,8 @@
  * arbitrary port numbers.
  *
  * - 3. hijack setsockopt() to wrap setsockopt in graft_sso_trans
+ *
+ * - 4. hijack connect(), sned{to|msg}() for bind() before connect()
  */
 
 
@@ -45,9 +47,9 @@
 #include "list.h"
 
 
-#define ENV_GRAFT_DISABLE	"GRAFT"
-#define ENV_GRAFT_CONV_PAIRS	"GRAFT_CONV_PAIRS"
-
+#define ENV_GRAFT_DISABLE		"GRAFT"
+#define ENV_GRAFT_CONV_PAIRS		"GRAFT_CONV_PAIRS"
+#define NEV_GRAFT_BIND_BEFORE_CONN	"GRAFT_BBCONN"
 
 static int (*original_socket)(int domain, int type, int protocol);
 static int (*original_bind)(int sockfd, const struct sockaddr *addr,
@@ -55,8 +57,17 @@ static int (*original_bind)(int sockfd, const struct sockaddr *addr,
 static int (*original_setsockopt)(int fd, int level, int optname,
 				  const void *optval, socklen_t optlen);
 static int (*original_close)(int fd);
+static int (*original_connect)(int fd, const struct sockaddr *addr,
+			       socklen_t addrlen);
+/*
+static ssize_t (*original_sendto)(int fd, const void *buf, size_t len,
+				  int flags, const struct sockaddr *dest_addr,
+				  socklen_t addrlen);
+static ssize_t (*original_sendmsg)(int fd, const struct msghdr *msg,
+				   int flags);
+*/
 
-#define MAX_CONVERTED_FDS 64
+#define MAX_CONVERTED_FDS	64
 static int __converted_fds[MAX_CONVERTED_FDS] = {};
 
 static int check_graft_enabled(void)
@@ -340,3 +351,55 @@ int close(int fd)
 
 	return original_close(fd);
 }
+
+static int bind_before_connect(int fd, char *epname)
+{
+	int ret;
+	struct sockaddr_gr sgr;
+	struct sockaddr_storage ss;
+	socklen_t addrlen;
+
+	/* check is fd already bind()ed */
+	addrlen = sizeof(ss);
+
+	ret = getsockname(fd, (struct sockaddr *)&ss, &addrlen);
+
+	if (ret < 0) {
+		pr_e("getsockname failed: %s", strerror(errno));
+		return ret;
+	}
+	if (addrlen > 0)
+		return 0;
+
+	/* ok, this socket is not bind()ed, lets bind() */
+	memset(&sgr, 0, sizeof(sgr));
+	sgr.sgr_family = AF_GRAFT;
+	strncpy(sgr.sgr_epname, epname, AF_GRAFT_EPNAME_MAX);
+
+
+	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
+}
+
+int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
+{
+	/* call bind() before connect() using GRAFT_BBC */
+	int ret;
+	char *p;
+
+	if (!check_graft_enabled() || !check_converted_fd(fd))
+		return original_connect(fd, addr, addrlen);
+
+	p = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
+	if (!p) {
+		pr_e("%s is not defined", NEV_GRAFT_BIND_BEFORE_CONN);
+		return -EINVAL;
+	}
+
+	pr_s("call bind() to %s before connect()", p);
+	ret = bind_before_connect(fd, p);
+	if (ret < 0)
+		return ret;
+
+	return original_connect(fd, addr, addrlen);
+}
+
