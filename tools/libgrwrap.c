@@ -31,6 +31,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -47,7 +48,7 @@
 #include "list.h"
 
 
-#define ENV_GRAFT_DISABLE		"GRAFT"
+#define ENV_GRAFT_DISABLED		"GRAFT"
 #define ENV_GRAFT_CONV_PAIRS		"GRAFT_CONV_PAIRS"
 #define NEV_GRAFT_BIND_BEFORE_CONN	"GRAFT_BBCONN"
 
@@ -59,66 +60,27 @@ static int (*original_setsockopt)(int fd, int level, int optname,
 static int (*original_close)(int fd);
 static int (*original_connect)(int fd, const struct sockaddr *addr,
 			       socklen_t addrlen);
-/*
 static ssize_t (*original_sendto)(int fd, const void *buf, size_t len,
-				  int flags, const struct sockaddr *dest_addr,
+				  int flags, const struct sockaddr *dest,
 				  socklen_t addrlen);
 static ssize_t (*original_sendmsg)(int fd, const struct msghdr *msg,
 				   int flags);
-*/
 
+static bool graft_disabled = false;
+#define check_graft_enabled()	(!graft_disabled)
+#define set_graft_disabled()	do { graft_disabled = true; } while (0)
+
+
+
+/* Converted File Descriptors */
 #define MAX_CONVERTED_FDS	64
-static int __converted_fds[MAX_CONVERTED_FDS] = {};
+struct converted_fd {
+	int fd;
+	bool bound;	/* bind() is called or not */
+};
+static struct converted_fd converted_fds[MAX_CONVERTED_FDS] = {{}};
 
-static int check_graft_enabled(void)
-{
-	char *p = getenv(ENV_GRAFT_DISABLE);
 
-	if (p && strncmp(p, "disable", 7) == 0)
-		return 0;
-
-	return 1;
-}
-
-static int store_converted_fd(int fd)
-{
-	int n;
-
-	/* store the converted fd number */
-	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
-		if (__converted_fds[n] == 0) {
-			__converted_fds[n] = fd;
-			return 0;
-		}
-	}
-
-	pr_e("over %d converted socckets!", MAX_CONVERTED_FDS);
-	return -1;
-}
-
-static int check_converted_fd(int fd)
-{
-	int n;
-
-	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
-		if (__converted_fds[n] == fd) {
-			return 1;
-		}
-	}
-
-	return 0;
-}
-
-static void release_converted_fd(int fd)
-{
-	int n;
-
-	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
-		if (__converted_fds[n] == fd) {
-			__converted_fds[n] = 0;
-		}
-	}
-}
 
 /* describing AF_INET/6 into AF_GRAFT address conversion pair */
 struct addrconv {
@@ -133,6 +95,7 @@ struct addrconv {
 	uint16_t port;
 	char *epname;
 };
+static struct list_head addrconv_list;	/* parsed aaddrconv list */
 
 int parse_addrconv(char *var, struct list_head *list)
 {
@@ -205,12 +168,124 @@ void free_addrconv(struct list_head *list)
 	}
 }
 
+
+
+
+
+/* Entry Point and Exit Point of LibGrWrapped Application */
+void libgrwrap_cleanup(void)
+{
+	free_addrconv(&addrconv_list);
+}
+
+__attribute__((constructor))
+void libgrwrap_hijack(void)
+{
+	char buf[1024];
+	char *str_conv_pairs;
+
+	/* hijacking syscalls */
+	original_socket = dlsym(RTLD_NEXT, "socket");
+	original_bind = dlsym(RTLD_NEXT, "bind");
+	original_setsockopt = dlsym(RTLD_NEXT, "setsockopt");
+	original_close = dlsym(RTLD_NEXT, "close");
+	original_bind = dlsym(RTLD_NEXT, "bind");
+	original_connect = dlsym(RTLD_NEXT, "connect");
+
+	/* check GRAFT disable or not */
+	if (getenv(ENV_GRAFT_DISABLED) &&
+	    strncmp(getenv(ENV_GRAFT_DISABLED), "disable", 7) == 0)
+		set_graft_disabled();
+
+	/* parse address conversion pairs */
+	INIT_LIST_HEAD(&addrconv_list);
+	str_conv_pairs = getenv(ENV_GRAFT_CONV_PAIRS);
+	if (str_conv_pairs) {
+		strncpy(buf, str_conv_pairs, sizeof(buf));
+		parse_addrconv(buf, &addrconv_list);
+	}
+
+	/* register cleanup handler */
+	atexit(libgrwrap_cleanup);
+}
+
+
+
+/* Managing converted socket file descriptors */
+static int store_converted_fd(int fd)
+{
+	int n;
+
+	/* store the converted fd number */
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (converted_fds[n].fd == 0) {
+			converted_fds[n].fd = fd;
+			return 0;
+		}
+	}
+
+	pr_e("over %d converted socckets!", MAX_CONVERTED_FDS);
+	return -1;
+}
+
+static int check_converted_fd(int fd)
+{
+	int n;
+
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (converted_fds[n].fd == fd) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static void release_converted_fd(int fd)
+{
+	int n;
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (converted_fds[n].fd == fd) {
+			converted_fds[n].fd = 0;
+			converted_fds[n].bound = false;
+			return;
+		}
+	}
+}
+
+static void set_bound_converted_fd(int fd)
+{
+	int n;
+
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (converted_fds[n].fd == fd) {
+			converted_fds[n].bound = true;
+			return;
+		}
+	}
+}
+
+static bool check_bound_converted_fd(int fd)
+{
+	int n;
+
+	for (n = 0; n < MAX_CONVERTED_FDS; n++) {
+		if (converted_fds[n].fd == fd) {
+			return converted_fds[n].bound;
+		}
+	}
+
+	return false;
+}
+
+
+
+
+/* Hijacked syscalls */
 int socket(int domain, int type, int protocol)
 {
 	int fd, ret, val;
 	int new_domain = domain;
-
-	original_socket = dlsym(RTLD_NEXT, "socket");
 
 	if (!check_graft_enabled())
 		return original_socket(domain, type, protocol);
@@ -227,45 +302,45 @@ int socket(int domain, int type, int protocol)
 	if (fd < 0)
 		return fd;
 
+	/* setsockopt SO_DELAYED until host socket is created */
 	val = 1;
-	ret = setsockopt(fd, IPPROTO_GRAFT,
-			 GRAFT_SO_DELAYED, &val, sizeof(val));
+	ret = original_setsockopt(fd, IPPROTO_GRAFT, GRAFT_SO_DELAYED,
+				  &val, sizeof(val));
 	if (ret < 0) {
 		pr_e("failed to set GRAFT_SO_DELAYED: %s", strerror(errno));
 		return ret;
 	}
 
-	if (store_converted_fd(fd) < 0)
+	/* setsockopt NAME_TRANSPARENT forever */
+	val = 1;
+	ret = original_setsockopt(fd, IPPROTO_GRAFT, GRAFT_NAME_TRANSPARENT,
+				  &val, sizeof(val));
+	if (ret < 0) {
+		pr_e("failed to set GRAFT_NAME_TRANSPARENT: %s",
+		     strerror(errno));
+		return ret;
+	}
+
+	if (store_converted_fd(fd) < 0) {
+		close(fd);
 		return -ENOBUFS;
+	}
 
 	return fd;
 }
 
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	char *str_conv_pairs, buf[1024];
-	struct list_head addrconv_list;
+	int ret, val;
 	struct addrconv *ac, *act;
 	struct sockaddr_gr sgr;
 	struct sockaddr_in *sin;
 	struct sockaddr_in6 *sin6;
 
-	original_bind = dlsym(RTLD_NEXT, "bind");
-
-	if (!check_graft_enabled() || !check_converted_fd(fd))
+	if (!check_graft_enabled() || !check_converted_fd(fd) ||
+	    addr->sa_family == AF_GRAFT)
 		return original_bind(fd, addr, addrlen);
 
-	/* ok, this is AF_GRAFT converted socket. */
-	str_conv_pairs = getenv(ENV_GRAFT_CONV_PAIRS);
-	if (!str_conv_pairs) {
-		/* conversion rule is not specified */
-		return original_bind(fd, addr, addrlen);		
-	}
-	
-	strncpy(buf, str_conv_pairs, sizeof(buf));
-	INIT_LIST_HEAD(&addrconv_list);
-	parse_addrconv(buf, &addrconv_list);
-	
 	act = NULL;
 	list_for_each_entry(ac, &addrconv_list, list) {
 		if (ac->family != addr->sa_family)
@@ -293,15 +368,11 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 			break;
 	}
 
-	if (!act) {
-		/* no matched pair */
-		free_addrconv(&addrconv_list);
+	/* no matched conversion pair */
+	if (!act)
 		return original_bind(fd, addr, addrlen);
-	}
 
-	free_addrconv(&addrconv_list);
-
-	/* create sockaddr_gr and call bind with it */
+	/* create sockaddr_gr and call bind() with it */
 	memset(&sgr, 0, sizeof(sgr));
 	sgr.sgr_family = AF_GRAFT;
 	strncpy(sgr.sgr_epname, act->epname, AF_GRAFT_EPNAME_MAX);
@@ -309,19 +380,62 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	pr_s("convert bind %s:%u to %s",
 	     act->pair, ntohs(ac->port), act->epname);
 
+	ret = original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
+	if (ret == 0) {
+		/* bind() success. host socket is created.
+		 * Thus, SO_DELAYED is no longer needed */
+		set_bound_converted_fd(fd);
+		val = 0;
+		if (original_setsockopt(fd, IPPROTO_GRAFT, GRAFT_SO_DELAYED,
+					&val, sizeof(val)) < 0)
+			pr_e("failed to disable GRAFT_SO_DELAYED for %d", fd);
+	}
 
-	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
+	return ret;
+}
+
+static int bind_before_connect(int fd)
+{
+	int ret, val;
+	char *epname;
+	struct sockaddr_gr sgr;
+
+	/* check is fd already bind()ed */
+	if (check_bound_converted_fd(fd))
+		return 0;
+
+	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
+	if (!epname) {
+		pr_e("%s is not defined", NEV_GRAFT_BIND_BEFORE_CONN);
+		return -EINVAL;
+	}
+
+	/* ok, this socket is not bind()ed, lets bind() */
+	memset(&sgr, 0, sizeof(sgr));
+	sgr.sgr_family = AF_GRAFT;
+	strncpy(sgr.sgr_epname, epname, AF_GRAFT_EPNAME_MAX);
+
+	ret = original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
+	if (ret == 0) {
+		/* bind() success. host socket is created.
+		 * Thus, SO_DELAYED is no longer needed */
+		set_bound_converted_fd(fd);
+		val = 0;
+		if (original_setsockopt(fd, IPPROTO_GRAFT, GRAFT_SO_DELAYED,
+					&val, sizeof(val)) < 0)
+			pr_e("failed to disable GRAFT_SO_DELAYED for %d", fd);
+	}
+
+	return ret;
 }
 
 int setsockopt(int fd, int level, int optname,
 	       const void *optval, socklen_t optlen)
 {
-	/* catch SOL_SOCKET setsockopts and wrap it into graft_sso_trans */
+	/* catch SOL_SOCKET setsockopt and wrap it into graft_sso_trans */
 
 	char buf[GRAFT_SSO_TRANS_SIZE];
 	struct graft_sso_trans *trans;
-
-	original_setsockopt = dlsym(RTLD_NEXT, "setsockopt");
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
 	    level != SOL_SOCKET)
@@ -342,8 +456,6 @@ int setsockopt(int fd, int level, int optname,
 
 int close(int fd)
 {
-	original_close = dlsym(RTLD_NEXT, "close");
-
 	if (!check_graft_enabled() || !check_converted_fd(fd))
 		return original_close(fd);
 
@@ -352,58 +464,59 @@ int close(int fd)
 	return original_close(fd);
 }
 
-static int bind_before_connect(int fd, char *epname)
-{
-	int ret;
-	struct sockaddr_gr sgr;
-	struct sockaddr_storage ss;
-	socklen_t addrlen;
-
-	original_bind = dlsym(RTLD_NEXT, "bind");
-
-	/* check is fd already bind()ed */
-	addrlen = sizeof(ss);
-	memset(&ss, 0, sizeof(ss));
-
-	ret = getsockname(fd, (struct sockaddr *)&ss, &addrlen);
-
-	if (ret < 0) {
-		pr_e("getsockname failed: %s", strerror(errno));
-		return ret;
-	}
-	if (ss.ss_family != 0)
-		return 0;
-
-	/* ok, this socket is not bind()ed, lets bind() */
-	memset(&sgr, 0, sizeof(sgr));
-	sgr.sgr_family = AF_GRAFT;
-	strncpy(sgr.sgr_epname, epname, AF_GRAFT_EPNAME_MAX);
-
-	return original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
-}
-
 int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	/* call bind() before connect() using GRAFT_BBC */
+	/* call bind() before connect() using GRAFT_BBCONN */
 	int ret;
-	char *p;
 
-	original_connect = dlsym(RTLD_NEXT, "connect");
-
-	if (!check_graft_enabled() || !check_converted_fd(fd))
+	if (!check_graft_enabled() || !check_converted_fd(fd) ||
+	    check_bound_converted_fd(fd))
 		return original_connect(fd, addr, addrlen);
 
-	p = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
-	if (!p) {
-		pr_e("%s is not defined", NEV_GRAFT_BIND_BEFORE_CONN);
-		return -EINVAL;
+	pr_s("call bind() before connect()");
+	ret = bind_before_connect(fd);
+	if (ret < 0) {
+		pr_e("bind() before connect() failed: %s", strerror(errno));
+		return ret;
 	}
 
-	pr_s("call bind() to %s before connect()", p);
-	ret = bind_before_connect(fd, p);
-	if (ret < 0)
-		return ret;
-
 	return original_connect(fd, addr, addrlen);
+}
+
+ssize_t sendto(int fd, const void *buf, size_t len, int flags, 
+	       const struct sockaddr *dest, socklen_t addrlen)
+{
+	int ret;
+
+	if (!check_graft_enabled() || !check_converted_fd(fd) ||
+	    check_bound_converted_fd(fd))
+		return original_sendto(fd, buf, len, flags, dest, addrlen);
+
+	pr_s("call bind() before connect()");
+	ret = bind_before_connect(fd);
+	if (ret < 0) {
+		pr_e("bind() before connect() failed: %s", strerror(errno));
+		return ret;
+	}
+
+	return original_sendto(fd, buf, len, flags, dest, addrlen);
+}
+
+ssize_t sendmsg(int fd, const struct msghdr *msg, int flags)
+{
+	int ret;
+
+	if (!check_graft_enabled() || !check_converted_fd(fd) ||
+	    check_bound_converted_fd(fd))
+		return original_sendmsg(fd, msg, flags);
+
+	pr_s("call bind() before connect()");
+	ret = bind_before_connect(fd);
+	if (ret < 0) {
+		pr_e("bind() before connect() failed: %s", strerror(errno));
+		return ret;
+	}
+
+	return original_sendmsg(fd, msg, flags);
 }
 
