@@ -185,12 +185,14 @@ void libgrwrap_hijack(void)
 	char *str_conv_pairs;
 
 	/* hijacking syscalls */
-	original_socket = dlsym(RTLD_NEXT, "socket");
-	original_bind = dlsym(RTLD_NEXT, "bind");
-	original_setsockopt = dlsym(RTLD_NEXT, "setsockopt");
-	original_close = dlsym(RTLD_NEXT, "close");
-	original_bind = dlsym(RTLD_NEXT, "bind");
-	original_connect = dlsym(RTLD_NEXT, "connect");
+	original_socket		= dlsym(RTLD_NEXT, "socket");
+	original_bind		= dlsym(RTLD_NEXT, "bind");
+	original_setsockopt	= dlsym(RTLD_NEXT, "setsockopt");
+	original_close		= dlsym(RTLD_NEXT, "close");
+	original_bind		= dlsym(RTLD_NEXT, "bind");
+	original_connect	= dlsym(RTLD_NEXT, "connect");
+	original_sendto		= dlsym(RTLD_NEXT, "sendto");
+	original_sendmsg	= dlsym(RTLD_NEXT, "sendmsg");
 
 	/* check GRAFT disable or not */
 	if (getenv(ENV_GRAFT_DISABLED) &&
