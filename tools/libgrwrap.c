@@ -39,13 +39,17 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <linux/genetlink.h>
 
 #include <graft.h>
 
+#include "libgenl.h"
+static struct rtnl_handle genl_rth;
+static int genl_family = -1;
+
 #define PROGNAME "libgrwrap.so"
 #include "../test/util.h"
-
-#include "list.h"
 
 
 #define ENV_GRAFT_DISABLED		"GRAFT"
@@ -65,6 +69,11 @@ static ssize_t (*original_sendto)(int fd, const void *buf, size_t len,
 				  socklen_t addrlen);
 static ssize_t (*original_sendmsg)(int fd, const struct msghdr *msg,
 				   int flags);
+static int (*original_getaddrinfo)(const char *node, const char *service,
+				   const struct addrinfo *hints,
+				   struct addrinfo **res);
+static void (*original_freeaddrinfo)(struct addrinfo *res);
+
 
 static bool graft_disabled = false;
 #define check_graft_enabled()	(!graft_disabled)
@@ -84,104 +93,193 @@ static struct converted_fd converted_fds[MAX_CONVERTED_FDS] = {{}};
 
 /* describing AF_INET/6 into AF_GRAFT address conversion pair */
 struct addrconv {
-	struct list_head list;
+	char original[64];	/* original ADDR:PORT=EPNAME string */
 
-	char *pair;
+	/* for getaddrinfo() conversion */
+	char node[64];		/* original address string */
+	char serv[64];		/* original portnum string */
+
+	/* for bind() conversion */
 	int family;
 	union {
 		struct in_addr addr4;
 		struct in6_addr addr6;
 	} addr;
 	uint16_t port;
-	char *epname;
+	char epname[AF_GRAFT_EPNAME_MAX];
 };
-static struct list_head addrconv_list;	/* parsed aaddrconv list */
+#define MAX_ADDRCONV	64
+struct addrconv bind_conv[MAX_ADDRCONV];
 
-int parse_addrconv(char *var, struct list_head *list)
+
+int parse_addrconv(char *var, struct addrconv addrconvs[])
 {
 	/* parse GRAFT_CONV_PAIRS in *vars, add struct addrconv to
 	 * *list, and returns the number of parsed pairs */
-	int cnt = 0, n;
-	char *p, *addr, *port;
-	struct addrconv *ac, *tmp;
+	int n, i;
+	char *p, *tok, *node, *serv, *epname;
 
-	for (p = strtok(var, " "); p != NULL; p = strtok(NULL, " ")) {
-		if (p) {
-			ac = (struct addrconv *)malloc(sizeof(*ac));
-			memset(ac, 0, sizeof(*ac));
-			ac->pair = p;
-			list_add(&ac->list, list);
-			cnt++;
-		}
-	}
-
-	/* convert ac->pair to addr and epname */
-	list_for_each_entry_safe(ac, tmp, list, list) {
-
-		addr = ac->pair;
-
-		for (p = ac->pair; p != '\0'; p++) {
-			if (*p == '=') {
-				/* delimiter of ADDR:PORT and EPNAME */
-				*p = '\0';
-				ac->epname = p + 1;
-				break;
-			}
-		}
-
-		for (n = strlen(ac->pair) - 1; n >= 0; n--) {
-			p = ac->pair + n;
-			if (*p == ':') {
-				/* delimiter of ADDR and PORT */
-				*p = '\0';
-				port = p + 1;
-				break;
-			}
-		}
-
-		ac->port = htons(atoi(port));
-
-		if (inet_pton(AF_INET, addr, &ac->addr) == 1)
-			ac->family = AF_INET;
-		else if (inet_pton(AF_INET6, addr, &ac->addr) == 1)
-			ac->family = AF_INET6;
-		else {
-			pr_e("invalid address %s", ac->pair);
-			list_del(&ac->list);
-			free(ac);
-			ac = NULL;
-			cnt--;
+	n = 0;
+	for (tok = strtok(var, " "); tok != NULL; tok = strtok(NULL, " ")) {
+		if (!tok)
 			continue;
+
+		node = NULL;
+		serv = NULL;
+		epname = NULL;
+
+		memset(&addrconvs[n], 0, sizeof(addrconvs[n]));
+		strncpy(addrconvs[n].original, tok, 64);
+
+		/* split ADDR:PORT and PENAME by '=' */
+		for (p = tok; *p != '\0'; p++) {
+			if (*p == '=') {
+				*p = '\0';
+				node = tok;
+				epname = p + 1;
+				break;
+			}
 		}
+		if (!node || !epname)
+			goto err_out;
+
+		/* split ADDR and PORT by ':' */
+		for (i = strlen(addrconvs[n].original); i >= 0; i--) {
+			p = tok+ i;
+			if (*p == ':') {
+				*p = '\0';
+				serv = p + 1;
+				break;
+			}
+		}
+		if (!serv)
+			goto err_out;
+
+		/* save strings to addrconv and convert them to binary */
+		if (*node == '\0')
+			strncpy(addrconvs[n].node, "null", 4);
+		else
+			strncpy(addrconvs[n].node, node, 64);
+		strncpy(addrconvs[n].serv, serv, 64);
+		strncpy(addrconvs[n].epname, epname, AF_GRAFT_EPNAME_MAX);
+
+		addrconvs[n].port = htons(atoi(addrconvs[n].serv));
+
+		if (*node == '\0')
+			addrconvs[n].family = -1;
+		else if (inet_pton(AF_INET, node, &addrconvs[n].addr) == 1)
+			addrconvs[n].family = AF_INET;
+		else if (inet_pton(AF_INET6, node, &addrconvs[n].addr) == 1)
+			addrconvs[n].family = AF_INET6;
+		else {
+			pr_e("node '%s' serv %s", node, serv);
+			goto err_out;
+		}
+
+		/*
+		pr_e("%d: parsed node:%s serv:%s ep:%s family:%d", n,
+		     addrconvs[n].node, addrconvs[n].serv, addrconvs[n].epname,
+		     addrconvs[n].family);
+		*/
+		n++;
 	}
 
-	return cnt;
+	return n;
+
+err_out:
+	pr_e("invalid pair '%s'", addrconvs[n].original);
+	return -EINVAL;
 }
 
-void free_addrconv(struct list_head *list)
+
+
+/* retrive all end points through genl */
+struct epname_chain {
+	char epname[AF_GRAFT_EPNAME_MAX];
+	struct epname_chain *next;
+};
+
+static int ep_nlmsg(const struct sockaddr_nl *who,
+		    struct nlmsghdr *n, void *arg)
 {
-	struct addrconv *ac, *tmp;
+	struct epname_chain *chain;
+	struct graft_genl_endpoint graft_ep;
+	struct genlmsghdr *ghdr;
+	struct rtattr *attrs[AF_GRAFT_ATTR_MAX + 1];
+	int len;
 
-	list_for_each_entry_safe(ac, tmp, list, list) {
-		list_del(&ac->list);
-		free(ac);
+	if (n->nlmsg_type == NLMSG_ERROR)
+		return -EBADMSG;
+
+	ghdr = NLMSG_DATA(n);
+	len = n->nlmsg_len - NLMSG_LENGTH(sizeof(*ghdr));
+	if (len < 0)
+		return -1;
+
+	parse_rtattr(attrs, AF_GRAFT_ATTR_MAX,
+		     (void *)ghdr + GENL_HDRLEN, len);
+
+	if (!attrs[AF_GRAFT_ATTR_ENDPOINT]) {
+		fprintf(stderr, "%s: endpoint not found in the nlmsg\n",
+			__func__);
+		return -EBADMSG;
 	}
+
+	memcpy(&graft_ep, RTA_DATA(attrs[AF_GRAFT_ATTR_ENDPOINT]),
+	       sizeof(graft_ep));
+
+	for (chain = arg; chain->next != NULL; chain = chain->next);
+	chain->next = (struct epname_chain *)malloc(sizeof(chain));
+	chain->next->next = NULL;
+	strncpy(chain->next->epname, graft_ep.name, AF_GRAFT_EPNAME_MAX);
+
+	return 0;
 }
 
+static struct epname_chain get_epname_chain(void)
+{
+	struct epname_chain chain;
+	memset(&chain, 0, sizeof(chain));
+	chain.epname[0] = '\0';
 
+        GENL_REQUEST(req, 128, genl_family, 0,
+		     AF_GRAFT_GENL_VERSION, AF_GRAFT_CMD_GET_ENDPOINT,
+		     NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST);
 
+	req.n.nlmsg_seq = genl_rth.dump = ++genl_rth.seq;
+
+	if (rtnl_send(&genl_rth, &req, req.n.nlmsg_len) < 0) {
+		pr_e("rtnl_send failed");
+		return chain;
+	}
+
+	if (rtnl_dump_filter(&genl_rth, ep_nlmsg, &chain) < 0) {
+		pr_e("Dump terminated");
+		return chain;
+	}
+
+	return chain;
+}
+
+static void free_epname_chain(struct epname_chain *chain)
+{
+	if (chain->next) {
+		free_epname_chain(chain->next);
+		chain->next = NULL;
+	}
+	else {
+		if (chain->epname[0] == '\0')
+			return;
+		free(chain);
+	}
+}
 
 
 /* Entry Point and Exit Point of LibGrWrapped Application */
-void libgrwrap_cleanup(void)
-{
-	free_addrconv(&addrconv_list);
-}
-
 __attribute__((constructor))
 void libgrwrap_hijack(void)
 {
-	char *str_conv_pairs;
+	char buf[1024];
 
 	/* hijacking syscalls */
 	original_socket		= dlsym(RTLD_NEXT, "socket");
@@ -192,6 +290,8 @@ void libgrwrap_hijack(void)
 	original_connect	= dlsym(RTLD_NEXT, "connect");
 	original_sendto		= dlsym(RTLD_NEXT, "sendto");
 	original_sendmsg	= dlsym(RTLD_NEXT, "sendmsg");
+	original_getaddrinfo	= dlsym(RTLD_NEXT, "getaddrinfo");
+	original_freeaddrinfo	= dlsym(RTLD_NEXT, "freeaddrinfo");
 
 	/* check GRAFT disable or not */
 	if (getenv(ENV_GRAFT_DISABLED) &&
@@ -199,14 +299,16 @@ void libgrwrap_hijack(void)
 		set_graft_disabled();
 
 	/* parse address conversion pairs */
-	INIT_LIST_HEAD(&addrconv_list);
-	str_conv_pairs = getenv(ENV_GRAFT_CONV_PAIRS);
-	if (str_conv_pairs) {
-		parse_addrconv(str_conv_pairs, &addrconv_list);
+	if (getenv(ENV_GRAFT_CONV_PAIRS)) {
+		strncpy(buf, getenv(ENV_GRAFT_CONV_PAIRS), sizeof(buf));
+		parse_addrconv(buf, bind_conv);
 	}
 
-	/* register cleanup handler */
-	atexit(libgrwrap_cleanup);
+	/* init GENL to gother endname in order to overwrite getaddrinfo */
+        if (genl_init_handle(&genl_rth, AF_GRAFT_GENL_NAME, &genl_family)) {
+		pr_e("genl init failed");
+		exit(1);
+	}
 }
 
 
@@ -290,11 +392,15 @@ int socket(int domain, int type, int protocol)
 	if (!check_graft_enabled())
 		return original_socket(domain, type, protocol);
 
-	if (domain == AF_INET || domain == AF_INET6) {
+	switch (domain) {
+	case AF_INET:
+	case AF_INET6:
 		pr_s("overwrite family %d with AF_GRAFT (%d)",
 		     domain, AF_GRAFT);
+	case AF_GRAFT:
 		new_domain = AF_GRAFT;
-	} else {
+		break;
+	default:
 		return original_socket(domain, type, protocol);
 	}
 
@@ -331,7 +437,7 @@ int socket(int domain, int type, int protocol)
 
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	int ret, val;
+	int ret, val, n;
 	struct addrconv *ac, *act;
 	struct sockaddr_gr sgr;
 	struct sockaddr_in *sin;
@@ -342,7 +448,8 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		return original_bind(fd, addr, addrlen);
 
 	act = NULL;
-	list_for_each_entry(ac, &addrconv_list, list) {
+	for (n = 0; n < MAX_ADDRCONV && bind_conv[n].family != 0; n++) {
+		ac = &bind_conv[n];
 		if (ac->family != addr->sa_family)
 			continue;
 
@@ -369,16 +476,17 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	}
 
 	/* no matched conversion pair */
-	if (!act)
+	if (!act) {
+		pr_e("no matched ep for bind() fd=%d", fd);
 		return original_bind(fd, addr, addrlen);
+	}
 
 	/* create sockaddr_gr and call bind() with it */
 	memset(&sgr, 0, sizeof(sgr));
 	sgr.sgr_family = AF_GRAFT;
 	strncpy(sgr.sgr_epname, act->epname, AF_GRAFT_EPNAME_MAX);
 
-	pr_s("convert bind %s:%u to %s",
-	     act->pair, ntohs(ac->port), act->epname);
+	pr_s("convert bind %s:%s to %s", act->node, act->serv, act->epname);
 
 	ret = original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
 	if (ret == 0) {
@@ -528,3 +636,70 @@ ssize_t sendmsg(int fd, const struct msghdr *msg, int flags)
 	return original_sendmsg(fd, msg, flags);
 }
 
+int getaddrinfo(const char *node, const char *service,
+		const struct addrinfo *hints, struct addrinfo **res)
+{
+	int ret;
+	struct addrinfo *res_gr;
+	struct sockaddr_gr *sgr;
+	struct addrinfo *rp;
+	struct epname_chain chain, *ch;
+
+	pr_e("getaddrinfo!! for %s", node);
+
+	if (node == NULL ||
+	    (strncmp(node, "graft-", 6) != 0 &&
+	     strncmp(node, "graft:", 6) != 0))
+		return original_getaddrinfo(node, service, hints, res);
+
+	/* 1st, find epname and check match after 'graft:' */
+
+	chain = get_epname_chain();
+	for (ch = chain.next; ch != NULL; ch = ch->next) {
+		if (strncmp(ch->epname, node + 6, AF_GRAFT_EPNAME_MAX) == 0) {
+			/* this is GRAFT End Point!! */
+
+			pr_s("return sockaddr_gr for %s", node + 6);
+
+			sgr = (struct sockaddr_gr *)malloc(sizeof(*sgr));
+			memset(sgr, 0, sizeof(*sgr));
+			sgr->sgr_family = AF_GRAFT;
+			strncpy(sgr->sgr_epname, node + 6,
+				AF_GRAFT_EPNAME_MAX);
+
+			res_gr = (struct addrinfo *)malloc(sizeof(*res_gr));
+			memset(res_gr, 0, sizeof(*res_gr));
+			res_gr->ai_flags = hints->ai_flags;
+			res_gr->ai_family = AF_GRAFT;
+			res_gr->ai_socktype = hints->ai_socktype;
+			res_gr->ai_protocol = hints->ai_protocol;
+			res_gr->ai_addrlen = sizeof(*sgr);
+			res_gr->ai_addr = (struct sockaddr *)sgr;
+			res_gr->ai_canonname = NULL;	/* XXX */
+			res_gr->ai_next = NULL;
+			*res = res_gr;
+
+			free_epname_chain(&chain);
+			return 0;
+		}
+	}
+	free_epname_chain(&chain);
+
+	/* 2nd, there is no EP name matched to node. leave this to
+	 * original getaddrinfo, and overwrite ai_family to AF_GRAFT
+	 */
+	ret = original_getaddrinfo(node + 6, service, hints, res);
+	if (ret == 0) {
+		for (rp = *res; rp != NULL; rp = rp->ai_next) {
+			pr_s("overwrite ai_family of %s", node + 6);
+			rp->ai_family = AF_GRAFT;
+		}
+	}
+
+	return ret;
+}
+
+void freeaddrinfo(struct addrinfo *res)
+{
+	return original_freeaddrinfo(res);
+}
