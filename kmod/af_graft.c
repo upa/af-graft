@@ -22,6 +22,8 @@
 #endif
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#define GRAFT_DEFAULT_EGRESS_EPNAME	"default-egress"
+
 
 /* Per netnamespace parameters.
  * af_graft keeps endpoint tables for per netnamespace
@@ -567,17 +569,35 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	return 0;
 }
 
+static int graft_bind_before_connect(struct socket *sock)
+{
+	int addrlen;
+	struct sockaddr_gr saddr_gr;
+
+	addrlen = sizeof(saddr_gr);
+	memset(&saddr_gr, 0, sizeof(saddr_gr));
+	saddr_gr.sgr_family = AF_GRAFT;
+	strncpy(saddr_gr.sgr_epname, GRAFT_DEFAULT_EGRESS_EPNAME,
+		AF_GRAFT_EPNAME_MAX);
+
+	return graft_bind(sock, (struct sockaddr *)&saddr_gr, addrlen);
+}
+
 static int graft_connect(struct socket *sock, struct sockaddr *vaddr,
 			 int sockaddr_len, int flags)
 {
+	int ret;
 	struct socket *hsock = graft_hsock(graft_sk(sock->sk));
 
 	/* XXX: should i accept AF_GRAFT endpoints for destinations? */
 
-	if (!hsock) {
-		pr_debug("%s: host socket is not created\n", __func__);
-		return -EADDRNOTAVAIL;
+	if (!graft_hsock(graft_sk(sock->sk))) {
+		pr_debug("%s: try bind() before conenct()\n", __func__);
+		ret = graft_bind_before_connect(sock);
+		if (ret < 0)
+			return ret;
 	}
+	hsock = graft_hsock(graft_sk(sock->sk));
 
 	return hsock->ops->connect(hsock, vaddr, sockaddr_len, flags);
 }
@@ -854,13 +874,16 @@ static int graft_getsockopt(struct socket *sock, int level,
 static int graft_sendmsg(struct socket *sock,
 			 struct msghdr *m, size_t total_len)
 {
+	int ret;
 	struct socket *hsock;
 
-	hsock = graft_hsock(graft_sk(sock->sk));
-	if (!hsock) {
-		pr_debug("%s: host socket is not created\n", __func__);
-		return -EADDRNOTAVAIL;
+	if (!graft_hsock(graft_sk(sock->sk))) {
+		pr_debug("%s: try bind() before conenct()\n", __func__);
+		ret = graft_bind_before_connect(sock);
+		if (ret < 0)
+			return ret;
 	}
+	hsock = graft_hsock(graft_sk(sock->sk));
 
 	return hsock->ops->sendmsg(hsock, m, total_len);
 }
@@ -882,13 +905,16 @@ static int graft_recvmsg(struct socket *sock,
 static ssize_t graft_sendpage(struct socket *sock, struct page *page,
 			      int offset, size_t size, int flags)
 {
+	int ret;
 	struct socket *hsock;
 
-	hsock = graft_hsock(graft_sk(sock->sk));
-	if (!hsock) {
-		pr_debug("%s: host socket is not created\n", __func__);
-		return -EADDRNOTAVAIL;
+	if (!graft_hsock(graft_sk(sock->sk))) {
+		pr_debug("%s: try bind() before conenct()\n", __func__);
+		ret = graft_bind_before_connect(sock);
+		if (ret < 0)
+			return ret;
 	}
+	hsock = graft_hsock(graft_sk(sock->sk));
 
 	return hsock->ops->sendpage(hsock, page, offset, size, flags);
 }

@@ -394,21 +394,14 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	return ret;
 }
 
-static int bind_before_connect(int fd)
+static int bind_before_connect(int fd, char *epname)
 {
 	int ret, val;
-	char *epname;
 	struct sockaddr_gr sgr;
 
 	/* check is fd already bind()ed */
 	if (check_bound_converted_fd(fd))
 		return 0;
-
-	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
-	if (!epname) {
-		pr_e("%s is not defined", NEV_GRAFT_BIND_BEFORE_CONN);
-		return -EINVAL;
-	}
 
 	/* ok, this socket is not bind()ed, lets bind() */
 	memset(&sgr, 0, sizeof(sgr));
@@ -468,16 +461,21 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
 	/* call bind() before connect() using GRAFT_BBCONN */
 	int ret;
+	char *epname;
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
 	    check_bound_converted_fd(fd))
 		return original_connect(fd, addr, addrlen);
 
-	pr_s("call bind() before connect()");
-	ret = bind_before_connect(fd);
-	if (ret < 0) {
-		pr_e("bind() before connect() failed: %s", strerror(errno));
-		return ret;
+	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
+	if (epname) {
+		pr_s("try bind() before connect()");
+		ret = bind_before_connect(fd, epname);
+		if (ret < 0) {
+			pr_e("bind() before connect() failed: %s",
+			     strerror(errno));
+			return ret;
+		}
 	}
 
 	return original_connect(fd, addr, addrlen);
@@ -487,16 +485,21 @@ ssize_t sendto(int fd, const void *buf, size_t len, int flags,
 	       const struct sockaddr *dest, socklen_t addrlen)
 {
 	int ret;
+	char *epname;
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
 	    check_bound_converted_fd(fd))
 		return original_sendto(fd, buf, len, flags, dest, addrlen);
 
-	pr_s("call bind() before connect()");
-	ret = bind_before_connect(fd);
-	if (ret < 0) {
-		pr_e("bind() before connect() failed: %s", strerror(errno));
-		return ret;
+	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
+	if (epname) {
+		pr_s("try bind() before connect()");
+		ret = bind_before_connect(fd, epname);
+		if (ret < 0) {
+			pr_e("bind() before connect() failed: %s",
+			     strerror(errno));
+			return ret;
+		}
 	}
 
 	return original_sendto(fd, buf, len, flags, dest, addrlen);
@@ -505,16 +508,21 @@ ssize_t sendto(int fd, const void *buf, size_t len, int flags,
 ssize_t sendmsg(int fd, const struct msghdr *msg, int flags)
 {
 	int ret;
+	char *epname;
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
 	    check_bound_converted_fd(fd))
 		return original_sendmsg(fd, msg, flags);
 
-	pr_s("call bind() before connect()");
-	ret = bind_before_connect(fd);
-	if (ret < 0) {
-		pr_e("bind() before connect() failed: %s", strerror(errno));
-		return ret;
+	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
+	if (epname) {
+		pr_s("try bind() before connect()");
+		ret = bind_before_connect(fd, epname);
+		if (ret < 0) {
+			pr_e("bind() before connect() failed: %s",
+			     strerror(errno));
+			return ret;
+		}
 	}
 
 	return original_sendmsg(fd, msg, flags);
