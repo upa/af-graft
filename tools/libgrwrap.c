@@ -181,7 +181,6 @@ void libgrwrap_cleanup(void)
 __attribute__((constructor))
 void libgrwrap_hijack(void)
 {
-	char buf[1024];
 	char *str_conv_pairs;
 
 	/* hijacking syscalls */
@@ -203,8 +202,7 @@ void libgrwrap_hijack(void)
 	INIT_LIST_HEAD(&addrconv_list);
 	str_conv_pairs = getenv(ENV_GRAFT_CONV_PAIRS);
 	if (str_conv_pairs) {
-		strncpy(buf, str_conv_pairs, sizeof(buf));
-		parse_addrconv(buf, &addrconv_list);
+		parse_addrconv(str_conv_pairs, &addrconv_list);
 	}
 
 	/* register cleanup handler */
