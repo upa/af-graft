@@ -687,6 +687,8 @@ int getaddrinfo(const char *node, const char *service,
 
 	/* 2nd, there is no EP name matched to node. leave this to
 	 * original getaddrinfo, and overwrite ai_family to AF_GRAFT
+	 * for connect(): create socket() with AF_GRAFT and connect()
+	 * to sockaddr_in(6).
 	 */
 	ret = original_getaddrinfo(node + 6, service, hints, res);
 	if (ret == 0) {
