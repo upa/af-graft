@@ -22,7 +22,7 @@
 #endif
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#define GRAFT_DEFAULT_EGRESS_EPNAME	"default-egress"
+#define GRAFT_DEFAULT_SOURCE_EPNAME	"default-source"
 
 
 /* Per netnamespace parameters.
@@ -577,7 +577,7 @@ static int graft_bind_before_connect(struct socket *sock)
 	addrlen = sizeof(saddr_gr);
 	memset(&saddr_gr, 0, sizeof(saddr_gr));
 	saddr_gr.sgr_family = AF_GRAFT;
-	strncpy(saddr_gr.sgr_epname, GRAFT_DEFAULT_EGRESS_EPNAME,
+	strncpy(saddr_gr.sgr_epname, GRAFT_DEFAULT_SOURCE_EPNAME,
 		AF_GRAFT_EPNAME_MAX);
 
 	return graft_bind(sock, (struct sockaddr *)&saddr_gr, addrlen);

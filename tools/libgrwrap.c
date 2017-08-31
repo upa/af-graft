@@ -645,8 +645,6 @@ int getaddrinfo(const char *node, const char *service,
 	struct addrinfo *rp;
 	struct epname_chain chain, *ch;
 
-	pr_e("getaddrinfo!! for %s", node);
-
 	if (node == NULL ||
 	    (strncmp(node, "graft-", 6) != 0 &&
 	     strncmp(node, "graft:", 6) != 0))
@@ -693,7 +691,7 @@ int getaddrinfo(const char *node, const char *service,
 	ret = original_getaddrinfo(node + 6, service, hints, res);
 	if (ret == 0) {
 		for (rp = *res; rp != NULL; rp = rp->ai_next) {
-			pr_s("overwrite ai_family of %s", node + 6);
+			pr_s("overwrite ai_family of %s to AF_GRAFT", node + 6);
 			rp->ai_family = AF_GRAFT;
 		}
 	}
