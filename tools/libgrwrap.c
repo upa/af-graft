@@ -438,16 +438,31 @@ int socket(int domain, int type, int protocol)
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
 	int ret, val, n;
+	char buf[64];
+	void *a = NULL;
+	uint16_t port = 0;
+	socklen_t slen;
 	struct addrconv *ac, *act;
 	struct sockaddr_gr sgr;
 	struct sockaddr_in *sin;
 	struct sockaddr_in6 *sin6;
+	struct sockaddr_storage ss;
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
 	    addr->sa_family == AF_GRAFT)
 		return original_bind(fd, addr, addrlen);
 
+	/* check this socket is already bind()ed */
+	slen = sizeof(ss);
+	memset(&ss, 0, sizeof(ss));
+	if (getsockname(fd, (struct sockaddr *)&ss, &slen) == 0) {
+		if (ss.ss_family != 0)
+			return 0;
+	}
+
 	act = NULL;
+	sin = (struct sockaddr_in *)addr;
+	sin6 = (struct sockaddr_in6 *)addr;
 	for (n = 0; n < MAX_ADDRCONV && bind_conv[n].family != 0; n++) {
 		ac = &bind_conv[n];
 		if (ac->family != addr->sa_family)
@@ -455,13 +470,11 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 		switch (ac->family) {
 		case AF_INET :
-			sin = (struct sockaddr_in *)addr;
 			if (memcmp(&ac->addr, &sin->sin_addr, 4) == 0 &&
 			    (ac->port == 0 || ac->port == sin->sin_port))
 				act = ac;
 			break;
 		case AF_INET6:
-			sin6 = (struct sockaddr_in6 *)addr;
 			if (memcmp(&ac->addr, &sin6->sin6_addr, 16) == 0 &&
 			    (ac->port == 0 || ac->port == sin6->sin6_port))
 				act = ac;
@@ -477,7 +490,18 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 	/* no matched conversion pair */
 	if (!act) {
-		pr_e("no matched ep for bind() fd=%d", fd);
+		switch (addr->sa_family) {
+		case AF_INET:
+			a = &sin->sin_addr;
+			port = ntohs(sin->sin_port);
+			break;
+		case AF_INET6:
+			a = &sin6->sin6_addr;
+			port = ntohs(sin6->sin6_port);
+			break;
+		}
+		inet_ntop(addr->sa_family, a, buf, sizeof(buf));
+		pr_e("no matched ep for fd=%d, %s:%u", fd, buf, port);
 		return original_bind(fd, addr, addrlen);
 	}
 
@@ -569,7 +593,8 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
 	/* call bind() before connect() using GRAFT_BBCONN */
 	int ret;
-	char *epname;
+	char *epname, buf[64];
+	uint16_t port;
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
 	    check_bound_converted_fd(fd))
@@ -586,7 +611,25 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		}
 	}
 
-	return original_connect(fd, addr, addrlen);
+	ret = original_connect(fd, addr, addrlen);
+
+
+	if (ret < 0) {
+		if (addr->sa_family == AF_INET) {
+			inet_ntop(AF_INET,
+				  &((struct sockaddr_in*)addr)->sin_addr,
+				  buf, sizeof(buf));
+			port = ((struct sockaddr_in*)addr)->sin_port;
+		}
+		if (addr->sa_family == AF_INET6) {
+			inet_ntop(AF_INET6,
+				  &((struct sockaddr_in6*)addr)->sin6_addr,
+				  buf, sizeof(buf));
+			port = ((struct sockaddr_in6*)addr)->sin6_port;
+		}
+		pr_e("connect() faield to %s:%u", buf, ntohs(port));
+	}
+	return ret;
 }
 
 ssize_t sendto(int fd, const void *buf, size_t len, int flags, 

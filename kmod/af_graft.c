@@ -571,7 +571,7 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 
 static int graft_bind_before_connect(struct socket *sock)
 {
-	int addrlen;
+	int ret, addrlen;
 	struct sockaddr_gr saddr_gr;
 
 	addrlen = sizeof(saddr_gr);
@@ -580,7 +580,11 @@ static int graft_bind_before_connect(struct socket *sock)
 	strncpy(saddr_gr.sgr_epname, GRAFT_DEFAULT_SOURCE_EPNAME,
 		AF_GRAFT_EPNAME_MAX);
 
-	return graft_bind(sock, (struct sockaddr *)&saddr_gr, addrlen);
+	ret = graft_bind(sock, (struct sockaddr *)&saddr_gr, addrlen);
+	if (ret != 0)
+		pr_debug("%s: failed ret=%d\n", __func__, ret);
+
+	return ret;
 }
 
 static int graft_connect(struct socket *sock, struct sockaddr *vaddr,
