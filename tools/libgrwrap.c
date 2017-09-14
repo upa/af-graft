@@ -100,24 +100,71 @@ struct addrconv {
 	char serv[64];		/* original portnum string */
 
 	/* for bind() conversion */
-	int family;
-	union {
-		struct in_addr addr4;
-		struct in6_addr addr6;
-	} addr;
-	uint16_t port;
+	struct sockaddr_storage ss;
 	char epname[AF_GRAFT_EPNAME_MAX];
 };
 #define MAX_ADDRCONV	64
 struct addrconv bind_conv[MAX_ADDRCONV];
 
 
+
+/* XXX: should handle return value */
+void sockaddr_ntop(const struct sockaddr *sa, char *dst, int len)
+{
+	char portbuf[64];
+
+	switch (sa->sa_family) {
+	case AF_INET :
+		inet_ntop(AF_INET, &((struct sockaddr_in *)sa)->sin_addr,
+			  dst, len);
+		snprintf(portbuf, sizeof(portbuf), ":%u",
+			 ntohs(((struct sockaddr_in *)sa)->sin_port));
+		strncat(dst, portbuf, len);
+		break;
+
+	case AF_INET6 :
+		inet_ntop(AF_INET6, &((struct sockaddr_in6 *)sa)->sin6_addr,
+			      dst, len);
+		snprintf(portbuf, sizeof(portbuf), ":%u",
+			 ntohs(((struct sockaddr_in6 *)sa)->sin6_port));
+		strncat(dst, portbuf, len);
+		break;
+	case AF_GRAFT :
+		snprintf(dst, len, "graft:%s",
+			 ((struct sockaddr_gr *)sa)->sgr_epname);
+		break;
+	default :
+		snprintf(dst, len, "unknown family %d", sa->sa_family);
+	}
+}
+
+
+int sockaddr_cmp(const struct sockaddr *sa1, const struct sockaddr *sa2)
+{
+	if (sa1->sa_family != sa2->sa_family)
+		return -1;
+
+	switch(sa1->sa_family) {
+	case AF_INET :
+		return memcmp(sa1, sa2, sizeof(struct sockaddr_in));
+	case AF_INET6 :
+		return memcmp(sa1, sa2, sizeof(struct sockaddr_in6));
+	case AF_GRAFT :
+		return strncmp(((struct sockaddr_gr *)sa1)->sgr_epname,
+			       ((struct sockaddr_gr *)sa2)->sgr_epname,
+			       AF_GRAFT_EPNAME_MAX);
+	}
+	return 0;
+}
+
+
 int parse_addrconv(char *var, struct addrconv addrconvs[])
 {
 	/* parse GRAFT_CONV_PAIRS in *vars, add struct addrconv to
 	 * *list, and returns the number of parsed pairs */
-	int n, i;
+	int n, i, s;
 	char *p, *tok, *node, *serv, *epname;
+	struct addrinfo hints, *res;
 
 	n = 0;
 	for (tok = strtok(var, " "); tok != NULL; tok = strtok(NULL, " ")) {
@@ -163,17 +210,24 @@ int parse_addrconv(char *var, struct addrconv addrconvs[])
 		strncpy(addrconvs[n].serv, serv, 64);
 		strncpy(addrconvs[n].epname, epname, AF_GRAFT_EPNAME_MAX);
 
-		addrconvs[n].port = htons(atoi(addrconvs[n].serv));
+		memset(&hints, 0, sizeof(hints));
+		hints.ai_family = AF_UNSPEC;
+		hints.ai_socktype = SOCK_DGRAM; /* not matter */
+		hints.ai_flags = AI_PASSIVE;
+		s = original_getaddrinfo(node, serv, &hints, &res);
+		if (s != 0) {
+			pr_e("getaddrinfo failed for %s:%s, %s",
+			     node, serv, gai_strerror(s));
+			goto err_free_gai_out;
+		}
 
-		if (*node == '\0')
-			addrconvs[n].family = -1;
-		else if (inet_pton(AF_INET, node, &addrconvs[n].addr) == 1)
-			addrconvs[n].family = AF_INET;
-		else if (inet_pton(AF_INET6, node, &addrconvs[n].addr) == 1)
-			addrconvs[n].family = AF_INET6;
-		else {
-			pr_e("node '%s' serv %s", node, serv);
-			goto err_out;
+		if (res) {
+			/* use first result */
+			memcpy(&addrconvs[n].ss,
+			       res->ai_addr, res->ai_addrlen);
+		} else {
+			pr_e("getaddrinfo not found for %s:%s", node, serv);
+			goto err_free_gai_out;
 		}
 
 		/*
@@ -186,9 +240,22 @@ int parse_addrconv(char *var, struct addrconv addrconvs[])
 
 	return n;
 
+err_free_gai_out:
+	freeaddrinfo(res);
 err_out:
 	pr_e("invalid pair '%s'", addrconvs[n].original);
 	return -EINVAL;
+}
+
+struct addrconv * find_addrconv(const struct sockaddr *sa,
+				struct addrconv addrconvs[])
+{
+	int n;
+	for (n = 0; n < MAX_ADDRCONV; n++) {
+		if (sockaddr_cmp(sa, (struct sockaddr *)&addrconvs[n].ss) == 0)
+			return &addrconvs[n];
+	}
+	return NULL;
 }
 
 
@@ -437,15 +504,11 @@ int socket(int domain, int type, int protocol)
 
 int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	int ret, val, n;
+	int ret, val;
 	char buf[64];
-	void *a = NULL;
-	uint16_t port = 0;
 	socklen_t slen;
-	struct addrconv *ac, *act;
+	struct addrconv *ac;
 	struct sockaddr_gr sgr;
-	struct sockaddr_in *sin;
-	struct sockaddr_in6 *sin6;
 	struct sockaddr_storage ss;
 
 	if (!check_graft_enabled() || !check_converted_fd(fd) ||
@@ -460,57 +523,21 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 			return 0;
 	}
 
-	act = NULL;
-	sin = (struct sockaddr_in *)addr;
-	sin6 = (struct sockaddr_in6 *)addr;
-	for (n = 0; n < MAX_ADDRCONV && bind_conv[n].family != 0; n++) {
-		ac = &bind_conv[n];
-		if (ac->family != addr->sa_family)
-			continue;
-
-		switch (ac->family) {
-		case AF_INET :
-			if (memcmp(&ac->addr, &sin->sin_addr, 4) == 0 &&
-			    (ac->port == 0 || ac->port == sin->sin_port))
-				act = ac;
-			break;
-		case AF_INET6:
-			if (memcmp(&ac->addr, &sin6->sin6_addr, 16) == 0 &&
-			    (ac->port == 0 || ac->port == sin6->sin6_port))
-				act = ac;
-			break;
-		default :
-			pr_e("unsupported address family %d", ac->family);
-			break;
-		}
-
-		if (act)
-			break;
-	}
+	ac = find_addrconv(addr, bind_conv);
 
 	/* no matched conversion pair */
-	if (!act) {
-		switch (addr->sa_family) {
-		case AF_INET:
-			a = &sin->sin_addr;
-			port = ntohs(sin->sin_port);
-			break;
-		case AF_INET6:
-			a = &sin6->sin6_addr;
-			port = ntohs(sin6->sin6_port);
-			break;
-		}
-		inet_ntop(addr->sa_family, a, buf, sizeof(buf));
-		pr_e("no matched ep for fd=%d, %s:%u", fd, buf, port);
+	if (!ac) {
+		sockaddr_ntop(addr, buf, sizeof(buf));
+		pr_e("no matched ep for fd=%d, %s", fd, buf);
 		return original_bind(fd, addr, addrlen);
 	}
 
 	/* create sockaddr_gr and call bind() with it */
 	memset(&sgr, 0, sizeof(sgr));
 	sgr.sgr_family = AF_GRAFT;
-	strncpy(sgr.sgr_epname, act->epname, AF_GRAFT_EPNAME_MAX);
+	strncpy(sgr.sgr_epname, ac->epname, AF_GRAFT_EPNAME_MAX);
 
-	pr_s("convert bind %s:%s to %s", act->node, act->serv, act->epname);
+	pr_s("convert bind %s:%s to %s", ac->node, ac->serv, ac->epname);
 
 	ret = original_bind(fd, (struct sockaddr *)&sgr, sizeof(sgr));
 	if (ret == 0) {
@@ -591,17 +618,17 @@ int close(int fd)
 
 int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 {
-	/* call bind() before connect() using GRAFT_BBCONN */
 	int ret;
 	char *epname, buf[64];
-	uint16_t port;
+	struct addrconv *ac;
+	struct sockaddr_gr sgr;
 
-	if (!check_graft_enabled() || !check_converted_fd(fd) ||
-	    check_bound_converted_fd(fd))
+	if (!check_graft_enabled() || !check_converted_fd(fd))
 		return original_connect(fd, addr, addrlen);
 
+	/* call bind before connect */
 	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
-	if (epname) {
+	if (epname && check_bound_converted_fd(fd)) {
 		pr_s("try bind() before connect()");
 		ret = bind_before_connect(fd, epname);
 		if (ret < 0) {
@@ -611,24 +638,27 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		}
 	}
 
-	ret = original_connect(fd, addr, addrlen);
+	/* if destination is matched in GRAFT_CONV_PAIRS, 
+	 * converted it to graft end point */
+	ac = find_addrconv(addr, bind_conv);
+	if (ac) {
+		sockaddr_ntop(addr, buf, sizeof(buf));
+		pr_s("convert connect %s to graft:%s", buf, ac->epname);
 
+		memset(&sgr, 0, sizeof(sgr));
+		sgr.sgr_family = AF_GRAFT;
+		strncpy(sgr.sgr_epname, ac->epname, AF_GRAFT_EPNAME_MAX);
+
+		ret = original_connect(fd, (struct sockaddr *)&sgr,
+				       sizeof(sgr));
+	} else
+		ret = original_connect(fd, addr, addrlen);
 
 	if (ret < 0) {
-		if (addr->sa_family == AF_INET) {
-			inet_ntop(AF_INET,
-				  &((struct sockaddr_in*)addr)->sin_addr,
-				  buf, sizeof(buf));
-			port = ((struct sockaddr_in*)addr)->sin_port;
-		}
-		if (addr->sa_family == AF_INET6) {
-			inet_ntop(AF_INET6,
-				  &((struct sockaddr_in6*)addr)->sin6_addr,
-				  buf, sizeof(buf));
-			port = ((struct sockaddr_in6*)addr)->sin6_port;
-		}
-		pr_e("connect() faield to %s:%u", buf, ntohs(port));
+		sockaddr_ntop(addr, buf, sizeof(buf));
+		pr_e("connect failed to %s", buf);
 	}
+
 	return ret;
 }
 
@@ -694,18 +724,18 @@ int getaddrinfo(const char *node, const char *service,
 		return original_getaddrinfo(node, service, hints, res);
 
 	/* 1st, find epname and check match after 'graft:' */
-
 	chain = get_epname_chain();
 	for (ch = chain.next; ch != NULL; ch = ch->next) {
 		if (strncmp(ch->epname, node + 6, AF_GRAFT_EPNAME_MAX) == 0) {
 			/* this is GRAFT End Point!! */
+
 
 			pr_s("return sockaddr_gr for %s", node + 6);
 
 			sgr = (struct sockaddr_gr *)malloc(sizeof(*sgr));
 			memset(sgr, 0, sizeof(*sgr));
 			sgr->sgr_family = AF_GRAFT;
-			strncpy(sgr->sgr_epname, node + 6,
+			strncpy(sgr->sgr_epname, ch->epname,
 				AF_GRAFT_EPNAME_MAX);
 
 			res_gr = (struct addrinfo *)malloc(sizeof(*res_gr));
@@ -714,7 +744,7 @@ int getaddrinfo(const char *node, const char *service,
 			res_gr->ai_family = AF_GRAFT;
 			res_gr->ai_socktype = hints->ai_socktype;
 			res_gr->ai_protocol = hints->ai_protocol;
-			res_gr->ai_addrlen = sizeof(*sgr);
+			res_gr->ai_addrlen = sizeof(struct sockaddr_gr);
 			res_gr->ai_addr = (struct sockaddr *)sgr;
 			res_gr->ai_canonname = NULL;	/* XXX */
 			res_gr->ai_next = NULL;
@@ -734,7 +764,8 @@ int getaddrinfo(const char *node, const char *service,
 	ret = original_getaddrinfo(node + 6, service, hints, res);
 	if (ret == 0) {
 		for (rp = *res; rp != NULL; rp = rp->ai_next) {
-			pr_s("overwrite ai_family of %s to AF_GRAFT", node + 6);
+			pr_s("overwrite ai_family of %s to AF_GRAFT",
+			     node + 6);
 			rp->ai_family = AF_GRAFT;
 		}
 	}

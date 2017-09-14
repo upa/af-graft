@@ -143,7 +143,7 @@ struct graft_genl_endpoint {
 	/* if both are 0, use default namespace. priority fd > pid */
 
 	ssize_t			addrlen;	/* length of actual saddr */
-	struct sockaddr_storage saddr;		/* host bind() end point */
+	struct sockaddr_storage saddr;		/* End point */
 } __attribute__((__packed__));
 
 enum {

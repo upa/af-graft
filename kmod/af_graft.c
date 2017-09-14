@@ -531,8 +531,11 @@ static int graft_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		return -EAFNOSUPPORT;
 
 	ep = graft_find_ep(graft, saddr_gr->sgr_epname);
-	if (!ep)
+	if (!ep) {
+		pr_debug("%s: epname %s not found\n", __func__,
+			 saddr_gr->sgr_epname);
 		return -ENOENT;
+	}
 
 
 	/* 2. create a host socket in specified or default netns */
@@ -590,10 +593,13 @@ static int graft_bind_before_connect(struct socket *sock)
 static int graft_connect(struct socket *sock, struct sockaddr *vaddr,
 			 int sockaddr_len, int flags)
 {
-	int ret;
-	struct socket *hsock = graft_hsock(graft_sk(sock->sk));
-
-	/* XXX: should i accept AF_GRAFT endpoints for destinations? */
+	int ret, target_len;
+	struct sockaddr *target_saddr;
+	struct sockaddr_gr *sgr;
+	struct graft_endpoint *ep;
+	struct net *net = sock_net(sock->sk);
+	struct graft_net *graft = net_generic(net, graft_net_id);
+	struct socket *hsock;
 
 	if (!graft_hsock(graft_sk(sock->sk))) {
 		pr_debug("%s: try bind() before conenct()\n", __func__);
@@ -603,7 +609,23 @@ static int graft_connect(struct socket *sock, struct sockaddr *vaddr,
 	}
 	hsock = graft_hsock(graft_sk(sock->sk));
 
-	return hsock->ops->connect(hsock, vaddr, sockaddr_len, flags);
+	/* if sa_family is AF_GRAFT, find an endpoint and connect. */
+	if (vaddr->sa_family == AF_GRAFT) {
+		sgr = (struct sockaddr_gr *)vaddr;
+		ep = graft_find_ep(graft, sgr->sgr_epname);
+		if (!ep) {
+			pr_debug("%s: epname %s not found\n", __func__,
+				 sgr->sgr_epname);
+			return -ENOENT;
+		}
+		target_saddr = (struct sockaddr *)&ep->genl_ep.saddr;
+		target_len = ep->genl_ep.addrlen;
+	} else {
+		target_saddr = vaddr;
+		target_len = sockaddr_len;
+	}
+
+	return hsock->ops->connect(hsock, target_saddr, target_len, flags);
 }
 
 static int graft_socketpair(struct socket *sock1, struct socket *sock2)
@@ -651,6 +673,8 @@ static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
 		if (hsock)
 			return hsock->ops->getname(hsock, uaddr, uaddr_len,
 						   peer);
+		else
+			*uaddr_len = 0;
 		/* if host socket does not exist, do not touch addr */
 	} else {
 		/* getsockname() and GRAFT_NAME_TRANSPARENT off,
