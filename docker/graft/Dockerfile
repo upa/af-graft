@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y \
 	iputils-ping	\
 	net-tools	\
 	iperf3		\
-	netperf
+	netperf		\
+	netcat
 
 	
 # setup AF_GRAFT

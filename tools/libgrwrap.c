@@ -628,7 +628,7 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen)
 
 	/* call bind before connect */
 	epname = getenv(NEV_GRAFT_BIND_BEFORE_CONN);
-	if (epname && check_bound_converted_fd(fd)) {
+	if (epname && !check_bound_converted_fd(fd)) {
 		pr_s("try bind() before connect()");
 		ret = bind_before_connect(fd, epname);
 		if (ret < 0) {
