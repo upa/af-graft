@@ -63,7 +63,9 @@ ep-test type ipv4 addr 127.0.0.1 port 8080
 
 This example creates a graft endpoint associated with 127.0.0.1:8080.
 The AF_GRAFT socket assigned to ep-http is grafted onto the AF_INET
-socket assigned to 127.0.0.1:8080.
+socket assigned to 127.0.0.1:8080. Note that if netns is not
+specified, default netns is used for target endpoints.
+
 
 
 
