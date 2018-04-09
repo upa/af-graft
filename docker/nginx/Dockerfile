@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y \
 RUN cd ${workdir}	\
 	&& git clone --depth 1 https://github.com/upa/af-graft	\
 	&& cd af-graft	\
-	&& make		\
+	&& make	-C tools	\
+	&& make -C iproute2-4.10.0	\
 	&& make -C iproute2-4.10.0 install
 
 ENV LD_PRELOAD ${workdir}/af-graft/tools/libgrwrap.so
