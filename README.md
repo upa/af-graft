@@ -143,7 +143,7 @@ ToDO
 
 AF_GRAFT enables grafting sockets in containers onto sockets in host
 AF_GRAFT network stack across the netns separation. However, we have
-not implemented integration with container runtimes such as docker yet
+not yet implemented integration with container runtimes such as docker
 (under development).
 
 Instead, containers can directly configure graft endpoints.
