@@ -7,6 +7,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/socket.h>
 #include <linux/rculist.h>
 #include <linux/string.h>
@@ -642,8 +643,13 @@ static int graft_socketpair(struct socket *sock1, struct socket *sock2)
 	return hsock->ops->socketpair(hsock, sock2);
 }
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 10, 0)
 static int graft_accept(struct socket *sock, struct socket *newsocket,
 			int flags)
+#else
+static int graft_accept(struct socket *sock, struct socket *newsocket,
+			int flags, bool kern)
+#endif
 {
 	struct socket *hsock = graft_hsock(graft_sk(sock->sk));	
 
@@ -660,7 +666,11 @@ static int graft_accept(struct socket *sock, struct socket *newsocket,
 	__module_get(newsocket->ops->owner);
 	module_put(THIS_MODULE);
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 10, 0)
 	return hsock->ops->accept(hsock, newsocket, flags);
+#else
+	return hsock->ops->accept(hsock, newsocket, flags, kern);
+#endif
 }
 
 static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
