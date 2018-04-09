@@ -47,7 +47,7 @@ Server listening on 5201
 ```
 
 Note that containers require NET_ADMIN capability to add graft
-endpoints in containers' network namespaces. We plane to remove this
+endpoints in containers' network namespaces. We plan to remove this
 vulnerable state by integrating AF_GRAFT into docker.
 
 

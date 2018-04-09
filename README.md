@@ -139,7 +139,7 @@ bind() with sockaddr_gr instead of sockaddr_in.
 
 
 
-## Integration with Containers
+## Integration with Containers Platforms
 
 ToDO
 
@@ -148,5 +148,7 @@ AF_GRAFT network stack across the netns separation. However, we have
 not yet implemented integration with container runtimes such as docker
 (under development).
 
-Instead, containers can directly configure graft endpoints.
+Instead, containers can directly configure graft endpoints in their
+netns. docker/ containes two example Dockerfiles for testing AF_GRAFT
+with docker containers.
 
