@@ -48,7 +48,7 @@
 static struct rtnl_handle genl_rth;
 static int genl_family = -1;
 
-#define PROGNAME "libgrwrap.so"
+#define PROGNAME "libgraft-hijack.so"
 #include "../test/util.h"
 
 
@@ -726,7 +726,7 @@ int getaddrinfo(const char *node, const char *service,
 	/* 1st, find epname and check match after 'graft:' */
 	chain = get_epname_chain();
 	for (ch = chain.next; ch != NULL; ch = ch->next) {
-		if (strncmp(ch->epname, node + 6, AF_GRAFT_EPNAME_MAX) == 0) {
+		if (strncmp(ch->epname, node, AF_GRAFT_EPNAME_MAX) == 0) {
 			/* this is GRAFT End Point!! */
 
 
