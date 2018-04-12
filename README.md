@@ -144,11 +144,11 @@ bind() with sockaddr_gr instead of sockaddr_in.
 ToDO
 
 AF_GRAFT enables grafting sockets in containers onto sockets in host
-AF_GRAFT network stack across the netns separation. However, we have
-not yet implemented integration with container runtimes such as docker
-(under development).
+network stack across the netns separation. However, we have not yet
+implemented integration with container runtimes such as docker (under
+development).
 
 Instead, containers can directly configure graft endpoints in their
-netns. docker/ containes two example Dockerfiles for testing AF_GRAFT
-with docker containers.
+netns with the NET_ADMIN capabaility. The docker/ directory containes
+two example Dockerfiles for testing AF_GRAFT with docker containers.
 
