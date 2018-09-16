@@ -23,7 +23,7 @@ We tested AF\_GRAFT on Ubuntu 16.04, Linux kernel 4.4.0-83-generic.
 $ git clone https://github.com/upa/af-graft.git
 $ cd af-graft
 $ make
-$ insmod kmod/af-graft.ko
+$ insmod kmod/af_graft.ko
 ```
 
 
