@@ -29,7 +29,7 @@ $ make
 $ insmod kmod/af_graft.ko
 ```
 
-Note that the current implementation overrides AF_IPX with AF_GRAFT
+Note that the current implementation overwrites AF_IPX with AF_GRAFT
 because Linux kernel prohibits dynamically adding a new address family
 number.
 
