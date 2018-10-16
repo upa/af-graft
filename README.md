@@ -12,6 +12,9 @@ By using AF\_GRAFT, applications can utilize host network stacks
 directly bypassing container network stacks. This mechanism improves
 throughput and latency of containerized applications.
 
+The detail is described in the paper [Grafting sockets for fast
+container networking](https://dl.acm.org/citation.cfm?id=3230723).
+
 
 ## Quick start
 
@@ -25,6 +28,19 @@ $ cd af-graft
 $ make
 $ insmod kmod/af_graft.ko
 ```
+
+Note that the current implementation overrides AF_IPX with AF_GRAFT
+because Linux kernel prohibits dynamically adding a new address family
+number.
+
+```
+sudo insmod af_graft.ko insmod: ERROR: could not insert module
+af_graft.ko: File exists
+```
+
+So, the error above indicates that a socket protocol family is already
+registered in the address family number, which is AF_IPX. In this
+case, please rmmod the ipx kernel module.
 
 
 
