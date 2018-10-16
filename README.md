@@ -34,8 +34,8 @@ because Linux kernel prohibits dynamically adding a new address family
 number.
 
 ```
-sudo insmod af_graft.ko insmod: ERROR: could not insert module
-af_graft.ko: File exists
+$ sudo insmod af_graft.ko
+insmod: ERROR: could not insert module af_graft.ko: File exists
 ```
 
 So, the error above indicates that a socket protocol family is already
