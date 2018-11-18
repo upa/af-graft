@@ -43,6 +43,11 @@ registered in the address family number, which is AF_IPX. In this
 case, please rmmod the ipx kernel module.
 
 
+In addition, compile iproute2 in accordance with your kernel version.
+iproute2-4.10.0 is for Ubnutu 16.04, and iproute2-4.15.0 for Ubuntu
+18.04.
+
+
 
 ### Endpoint
 
