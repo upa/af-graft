@@ -101,6 +101,7 @@ static const struct cmd {
 	{ "netconf",	do_ipnetconf },
 	{ "vrf",	do_ipvrf},
 	{ "sr",		do_seg6 },
+	{ "graft",      do_ipgraft },
 	{ "help",	do_help },
 	{ 0 }
 };

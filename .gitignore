@@ -10,4 +10,7 @@ Module.symvers
 core
 *.o.d
 
+kmod/.cache.mk
+
+
 setup.sh
