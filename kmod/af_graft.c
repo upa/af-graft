@@ -673,6 +673,7 @@ static int graft_accept(struct socket *sock, struct socket *newsocket,
 #endif
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
 static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
 			 int *uaddr_len, int peer)
 {
@@ -698,6 +699,25 @@ static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
 
 	return 0;
 }
+#else
+static int graft_getname(struct socket *sock, struct sockaddr *uaddr, int peer)
+{
+	struct graft_sock *gsk = graft_sk(sock->sk);
+	struct socket *hsock = graft_hsock(gsk);
+
+	if (peer || gsk->graft_name_trans) {
+		if (hsock)
+			return hsock->ops->getname(hsock, uaddr, peer);
+		return 0;
+	} else {
+		/* getsockname() and GRAFT_NAME_TRANSPARENT off,
+		 * this means getsocknet to this graft socket */
+		memcpy(uaddr, &gsk->saddr_gr, sizeof(gsk->saddr_gr));
+
+		return sizeof(gsk->saddr_gr);
+	}
+}
+#endif
 
 static unsigned int graft_poll(struct file *file, struct socket *sock,
 			       struct poll_table_struct *wait)
