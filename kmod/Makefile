@@ -10,5 +10,10 @@ all:
 	echo $(ccflags-y)
 	make -C $(KERNELSRCDIR) M=$(BUILD_DIR) V=$(VERBOSE) modules
 
+install:
+	install -m 644 -D ./af_graft.ko \
+		/lib/modules/$(shell uname -r)/kernel/drivers/misc/
+	depmod -a
+
 clean:
 	make -C $(KERNELSRCDIR) M=$(BUILD_DIR) clean

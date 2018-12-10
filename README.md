@@ -18,7 +18,8 @@ container networking](https://dl.acm.org/citation.cfm?id=3230723).
 
 ## Quick start
 
-We tested AF\_GRAFT on Ubuntu 16.04, Linux kernel 4.4.0-83-generic.
+We tested AF\_GRAFT on Ubuntu 16.04, Linux kernel 4.4.0-83-generic,
+and Ubuntu 18.04, Linux kernel 4.15.0-20-generic.
 
 ### Compile
 
@@ -47,6 +48,17 @@ In addition, compile iproute2 in accordance with your kernel version.
 iproute2-4.10.0 is for Ubnutu 16.04, and iproute2-4.15.0 for Ubuntu
 18.04.
 
+
+### Install
+
+```shell-session
+$ sudo apt install flex bison # for iproute2
+$ cd af_graft
+$ sudo make install
+```
+
+default ip command is installed in /bin, and the AF_GRAFT-capable one is
+installed in /sbin/ip. So, we recommend you to make alias ip=/sbin/ip.
 
 
 ### Endpoint

@@ -10,6 +10,12 @@ all:
 		make -C $$i; \
 	done
 
+install:
+	for i in kmod $(iproute2-src); do \
+		echo; echo $$i; \
+		make -C $$i install; \
+	done
+
 clean:
 	for i in $(subdirs); do \
 		echo; echo $$i; \
