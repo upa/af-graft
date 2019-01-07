@@ -1,6 +1,6 @@
 
 
-iproute2-src = iproute2-$(shell uname -r | cut -d '-' -f 1)
+iproute2-src = iproute2-$(shell uname -r | cut -d '-' -f 1 | cut -d '.' -f 1,2).0
 subdirs = kmod $(iproute2-src) test tools
 
 

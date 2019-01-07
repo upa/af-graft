@@ -438,7 +438,7 @@ static int graft_sso_delayed_execute(struct graft_sock *gsk)
 static int graft_sso_delayed_result(struct graft_sock *gsk,
 				    char __user *optval, int __user *optlen)
 {
-	int ret = 0, res_siz, n, len, totlen;
+	int ret = 0, res_siz, n, len, totlen, copied;
 	char __user *ptr;
 	struct graft_sso *sso;
 
@@ -457,7 +457,12 @@ static int graft_sso_delayed_result(struct graft_sock *gsk,
 			break;
 		}
 
-		copy_to_user(ptr, &sso->res, res_siz);
+		copied = copy_to_user(ptr, &sso->res, res_siz);
+		if (copied < res_siz) {
+			ret = -ENOBUFS;
+			totlen += copied;
+			break;
+		}
 		totlen += res_siz;
 		ptr += res_siz;
 		len -= res_siz;
@@ -673,6 +678,7 @@ static int graft_accept(struct socket *sock, struct socket *newsocket,
 #endif
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 17, 0)
 static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
 			 int *uaddr_len, int peer)
 {
@@ -698,6 +704,29 @@ static int graft_getname(struct socket *sock, struct sockaddr *uaddr,
 
 	return 0;
 }
+#else
+static int graft_getname(struct socket *sock, struct sockaddr *uaddr, int peer)
+{
+	struct graft_sock *gsk = graft_sk(sock->sk);
+	struct socket *hsock = graft_hsock(gsk);
+
+	if (peer || gsk->graft_name_trans) {
+		if (hsock)
+			return hsock->ops->getname(hsock, uaddr, peer);
+		else
+			return 0;
+		/* if host socket does not exist, do not touch addr */
+	} else {
+		/* getsockname() and GRAFT_NAME_TRANSPARENT off,
+		 * this means getsocknet to this graft socket */
+		memcpy(uaddr, &gsk->saddr_gr, sizeof(gsk->saddr_gr));
+		return sizeof(gsk->saddr_gr);
+	}
+
+	/* not reached */
+	return 0;
+}
+#endif
 
 static unsigned int graft_poll(struct file *file, struct socket *sock,
 			       struct poll_table_struct *wait)
@@ -762,7 +791,7 @@ static int graft_setsockopt(struct socket *sock, int level,
 			    int optname, char __user *optval,
 			    unsigned int optlen)
 {
-	int val, ret = 0;
+	int val, n, ret = 0;
 	char *buf;
 	struct graft_sock *gsk = graft_sk(sock->sk);
 	struct graft_sso_trans *t;
@@ -777,7 +806,13 @@ static int graft_setsockopt(struct socket *sock, int level,
 		ret = -ENOBUFS;
 		goto kmalloc_out;
 	}
-	copy_from_user(buf, optval, optlen);
+	n = copy_from_user(buf, optval, optlen);
+	if (n < optlen) {
+		pr_err("%s: copy %dB from user but intended to get %dB\n",
+		       __func__, n, optlen);
+		goto out;
+	}
+
 
 #define opt_check(optval, optlen, len) ((optval) && (optlen) <= (len))
 
