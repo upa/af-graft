@@ -31,7 +31,7 @@
 #include "list.h"
 
 
-#define PROGNAME "libgraft.so"
+#define PROGNAME "libgraft-convert.so"
 #include "../test/util.h"
 
 /* print if verbose */
@@ -457,7 +457,7 @@ static int parse_graft_egress(char *var)
 		}
 
 		if (p_node->data) {
-			pr_e("prefix pair dup for %s:%s", prefix, length);
+			pr_e("prefix pair dup for %s/%s", prefix, length);
 			goto err_out;
 		}
 		p_node->data = cp;
@@ -468,7 +468,7 @@ static int parse_graft_egress(char *var)
 	return n;
 
 err_out:
-	pr_e("invalid egress pair %s:%s=%s", prefix, length, epname);
+	pr_e("invalid egress pair %s/%s=%s", prefix, length, epname);
 	return -EINVAL;
 }
 
@@ -702,7 +702,7 @@ static int bind_before_connect(int fd, const struct sockaddr *addr)
 	/* find conv_prefix mathcs for the addr */
 	cp = find_conv_prefix(addr);
 	if (!cp) {
-		pr_e("no matched prefix found for %s", buf);
+		pr_e("no matched prefixs for %s", buf);
 		return 0;
 	}
 
