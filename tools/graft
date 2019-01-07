@@ -1,0 +1,70 @@
+#!/bin/bash
+
+HIJACK_LIB=/usr/local/lib/libgraft-convert.so
+
+usage() {
+	echo "$0, AF_GRAFT conversion wrapper"
+	echo
+	echo "Usage: $0 [-i INGRESS] [-e EGRESS] -- command arguments" 
+	echo 
+	echo "optional arguments:"
+	echo "  -h    help"
+	echo "  -v    verbose mode"
+	echo "  -i ADDRESS:PORT=EPNAME, conversion for ingress connections"
+	echo "  -e PREFIX:PREFLEN=EPNAME, conversion for egress connections"
+	exit 1
+}
+
+INGRESS_VAR=""
+EGRESS_VAR=""
+GRAFT_VERBOSE="0"
+
+while getopts i:e:vh OPT
+do
+	case $OPT in
+		i)
+			INGRESS_VAR="$INGRESS_VAR $OPTARG"
+			;;
+		e)
+			EGRESS_VAR="$EGRESS_VAR $OPTARG"
+			;;
+		v)
+			GRAFT_VERBOSE="1"
+			;;
+		h)
+			usage
+			;;
+		\?) usage
+	esac
+done
+
+INGRESS_VAR=${INGRESS_VAR## }
+EGRESS_VAR=${EGRESS_VAR## }
+
+shift $(($OPTIND - 1))
+
+
+# validation
+if [ ! -e $HIJACK_LIB ]; then
+	echo $HIJACL_LIB is not installed
+	exit 1
+fi
+
+if [ $# -eq 0 ]; then
+	echo "please specify command arguments"
+fi
+
+
+# execute command with environmental variables
+if [ $GRAFT_VERBOSE -gt 0 ]; then
+	echo LD_PRELOAD=$HIJACK_LIB
+	echo GRAFT_VERBOSE=$GRAFT_VERBOSE
+	echo GRAFT_INGRESS_CONVERT=$INGRESS_VAR
+	echo GRAFT_EGRESS_CONVERT=$EGRESS_VAR
+fi
+
+LD_PRELOAD=$HIJACK_LIB \
+	GRAFT_VERBOSE=$GRAFT_VERBOSE		\
+	GRAFT_INGRESS_CONVERT=$INGRESS_VAR	\
+	GRAFT_EGRESS_CONVERT=$EGRESS_VAR	\
+	$@

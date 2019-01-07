@@ -19,5 +19,9 @@ libgraft-hijack.so: libgraft-hijack.c $(LIB)
 libgraft-convert.so: libgraft-convert.c $(LIB)
 	$(CC) $< $(CFLAGS) $(LDL_FLAGS) $(LIB) -o $@
 
+install: all
+	install -m 644 -D ./libgraft-convert.so	/usr/local/lib/
+	install -m 755 -D ./graft /usr/local/bin/
+
 clean:
 	rm $(PROGNAME) $(LIB)
