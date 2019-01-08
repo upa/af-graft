@@ -16,14 +16,13 @@ ACM/IEEE Symposium on Architectures for Networking and Communications
 Systems 2018.
 
 
-## Quick start
+
+## Compile
 
 We tested AF_GRAFT on
 - Ubuntu 16.04, kernel 4.4.0-83-generic
 - Ubuntu 18.04, kernel 4.15.0-43-generic
 - Fedora 29, kernel 4.19.13-300
-
-### Compile
 
 ```shell-session
 $ sudo apt install flex bison # for iproute2
@@ -51,7 +50,7 @@ case, please rmmod the ipx kernel module.
 
 
 
-### Install
+## Install
 
 ```shell-session
 $ cd af_graft
@@ -64,7 +63,7 @@ is installed in /sbin/ip. So, we recommend you to make an alias
 ip=/sbin/ip.
 
 
-### Endpoint
+## Endpoint
 
 AF_GRAFT uses _Endpoints_ to specify which AF_GRAFT sockets to be
 grafted onto which sockets. Endpoints are the same as the _names_ of
@@ -110,7 +109,7 @@ bypassing.
 
 
 
-### How to bind() AF_GRAFT sockets.
+## How to bind() AF_GRAFT sockets.
 
 To bind AF_GRAFT sockets to graft endpoints, we introduced a new
 sockaddr structure, `struct sockaddr_gr`. It is defined in
@@ -143,7 +142,7 @@ Then, `sock` can be used as usual TCP sockets.
 
 
 
-### Run Applications with AF_GRAFT
+## Run Applications with AF_GRAFT
 
 AF_GRAFT is a new address family, therefore, existing applications as
 is cannot work with AF_GRAFT. A better solution is to support AF_GRAFT
@@ -179,7 +178,7 @@ optional arguments:
 
 
 
-#### Server-side sockets
+### Server-side sockets
 
 There are two types of sockets, ingress and egress sockets (as known
 as server-side and client-side sockets). An ingress socket is assigned
@@ -211,7 +210,7 @@ Connecting to host 127.0.0.1, port 8080
 
 
 
-#### Client-side sockets
+### Client-side sockets
 
 On the other hand, for the egress side, which means client sockets for
 outbound connections, `-e` option can be used. This option specifies
@@ -236,7 +235,7 @@ sockets.
 
 
 
-#### Note
+### Note
 
 1. `graft` command supports both IPv4 and IPv6, and multiple ingress and
 egress conversion mappings. A use case is shown in [simple integration
