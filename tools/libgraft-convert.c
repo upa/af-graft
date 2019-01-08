@@ -3,6 +3,7 @@
  *
  * - GRAFT_INGRESS_CONVERT
  * param is "ADDR:PORT=EPNAME ADDR:PORT=EPNAME ..."
+ * PORT can be specified as range like PORT_START-PORT_END
  *
  * - GRAFT_EGRESS_CONVERT
  * param is "PREFIX/LEN=EPNAME PREFIX/LEN=EPNAME ..."
@@ -53,7 +54,13 @@ struct conv_fd {
 
 struct conv_addr {
 	struct list_head list;			/* libgraft.ingress_list*/
-	struct sockaddr_storage ss;		/* original sockaddr */
+
+	int family;				/* original address family */
+	union {
+		struct in_addr addr4;
+		struct in6_addr addr6;
+	} addr;					/* original address for bind */
+	int port_start, port_end;		/* port number range */
 	char epname[AF_GRAFT_EPNAME_MAX];	/* target graft endpoint */
 };
 
@@ -198,9 +205,8 @@ static void sockaddr_ntop(const struct sockaddr *sa, char *dst, int len)
 
 static struct conv_addr *make_conv_addr(char *node, char *serv, char *epname)
 {
-	int r;
+	char *p, *start, *end;
 	struct conv_addr *ca;
-	struct addrinfo hints, *res;
 	
 	ca = (struct conv_addr *)malloc(sizeof(struct conv_addr));
 	if (!ca) {
@@ -208,30 +214,38 @@ static struct conv_addr *make_conv_addr(char *node, char *serv, char *epname)
 		return NULL;
 	}
 
-	/* validate node and serv using getaddrinfo */
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_DGRAM;	/* no matter */
-	hints.ai_flags = AI_PASSIVE;
-	r = getaddrinfo(node, serv, &hints, &res);
-	if (r != 0) {
-		pr_e("invalid address %s:%s, %s", node, serv, gai_strerror(r));
+	/* convert address from string to binary */
+	if (inet_pton(AF_INET, node, &ca->addr) == 1)
+		ca->family = AF_INET;
+	else if (inet_pton(AF_INET6, node, &ca->addr) == 1)
+		ca->family = AF_INET6;
+	else {
+		pr_e("invalid address %s", node);
 		goto err_out;
 	}
 
+	/* obtain port number */
+	start = serv;
+	end = serv;
+	if ((p = strchr(serv, '-'))) {
+		/* this is range */
+		end = p + 1;
+		*p = '\0';
+	}
 
-	if (res) {
-		/* use the first result */
-		memcpy(&ca->ss, res->ai_addr, res->ai_addrlen);
-	} else {
-		pr_e("addrinfo not found for %s:%s", node, serv);
+	ca->port_start = atoi(start);
+	ca->port_end = atoi(end);
+	if (ca->port_start < 0 || ca->port_start > 0xFFFF ||
+	    ca->port_end < 0 || ca->port_end > 0xFFFF) {
+		pr_e("invalid port range %d-%d", ca->port_start, ca->port_end);
 		goto err_out;
 	}
-	freeaddrinfo(res);
+		
 
 	strncpy(ca->epname, epname, AF_GRAFT_EPNAME_MAX);
 
-	pr_v("use %s for %s:%s (ingress)", epname, node, serv);
+	pr_v("use %s for %s:%d-%d (ingress)", epname, node,
+	     ca->port_start, ca->port_end);
 
 	return ca;
 
@@ -245,7 +259,8 @@ static int parse_graft_ingress(char *var)
 	/* parse GRAFT_INGRESS_CONVERT.
 	 * param is "ADDR:PORT=EPNAME ..."
 	 * each pair is converted into struct conv_addr and stored to 
-	 * libgraft.ingres_list.
+	 * libgraft.ingres_list. PORT can be specified as range
+	 * like PORT_START-PORT_END
 	 */
 
 	int n, i;
@@ -301,25 +316,42 @@ err_out:
 }
 	
 
-static int sockaddr_cmp(const struct sockaddr *sa1, const struct sockaddr *sa2)
+static int compare_conv_addr(const struct sockaddr *sa, struct conv_addr *ca)
 {
-	if (sa1->sa_family != sa2->sa_family)
+	int n, port, alen, ret;
+	void *addr;
+
+	if (sa->sa_family != ca->family)
 		return -1;
 
-	switch(sa1->sa_family) {
-	case AF_INET :
-		return memcmp(sa1, sa2, sizeof(struct sockaddr_in));
-	case AF_INET6 :
-		return memcmp(sa1, sa2, sizeof(struct sockaddr_in6));
-	case AF_GRAFT :
-		return strncmp(((struct sockaddr_gr *)sa1)->sgr_epname,
-			       ((struct sockaddr_gr *)sa2)->sgr_epname,
-			       AF_GRAFT_EPNAME_MAX);
+	/* compare address */
+	switch (sa->sa_family) {
+	case AF_INET:
+		alen = sizeof(struct in_addr);
+		addr = &(((struct sockaddr_in*)sa)->sin_addr);
+		port = ((struct sockaddr_in*)sa)->sin_port;
+		break;
+	case AF_INET6:
+		alen = sizeof(struct in6_addr);
+		addr = &(((struct sockaddr_in6*)sa)->sin6_addr);
+		port = ((struct sockaddr_in6*)sa)->sin6_port;
+		break;
 	default:
-		pr_e("unsupported address family '%d'", sa1->sa_family);
+		pr_e("unsupported address family %d", sa->sa_family);
 		return -1;
 	}
 
+	ret = memcmp(addr, &ca->addr, alen);
+	if (ret != 0)
+		return ret;
+
+	/* check port range */
+	for (n = ca->port_start; n <= ca->port_end; n++) {
+		if (port == htons(n))
+			return 0;
+	}
+
+	return -1;
 }
 
 static struct conv_addr *find_conv_addr(const struct sockaddr *sa)
@@ -327,7 +359,7 @@ static struct conv_addr *find_conv_addr(const struct sockaddr *sa)
 	struct conv_addr *ca;
 
 	list_for_each_entry(ca, &libgraft.ingress_list, list) {
-		if (sockaddr_cmp(sa, (struct sockaddr *)&ca->ss) == 0)
+		if (compare_conv_addr(sa, ca) == 0)
 			return ca;
 	}
 
@@ -648,6 +680,10 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 	if (!ca) {
 		pr_e("no matched ep for fd=%d, %s. call original bind",
 		     fd, buf);
+
+		/* XXX: bind() for AF_GRAFT family socket with
+		 * original sockaddr (in or in6) fails due to
+		 * EAFNOSUPPORT. is this correct behavior? */
 		return original_bind(fd, addr, addrlen);
 	}
 

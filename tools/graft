@@ -11,6 +11,7 @@ usage() {
 	echo "  -h    help"
 	echo "  -v    verbose mode"
 	echo "  -i ADDRESS:PORT=EPNAME, conversion for ingress connections"
+	echo "      PORT can be specified as range like PORT_START-PORT_END"
 	echo "  -e PREFIX:PREFLEN=EPNAME, conversion for egress connections"
 	exit 1
 }
