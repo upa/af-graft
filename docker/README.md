@@ -4,9 +4,10 @@
 This document describes how to use AF_GRAFT with docker as is with
 minimum effort.
 
-First, prepare a docker image that is capable of AF_GRAFT.
-1. docker pull upaa/graft-demo
-2. cd af-graft/docker/demo && ./build-image.sh [container name] after make
+First, prepare a docker image that is capable of AF_GRAFT. There are
+two ways to do it.
+- docker pull upaa/graft-demo
+- cd af-graft/docker/demo && ./build-image.sh [container name] after make
 
 Both images are identical.
 
@@ -22,10 +23,10 @@ kubernetes.
 $ docker run --net=none -d -it --name net1 ubuntu bash
 ```
 
-This creates a container named `net1`. This container only contains
-graft endpoints on its network namespace. Thus, any interfaces,
-addresses, and connectivity are unnecessary. --net=none just creates
-separated network namespace and configures nothing.
+This creates a container named `net1`. --net=none just creates
+separated network namespace and configures nothing. This container
+will only contains graft endpoints on its network namespace. Thus, any
+interfaces, addresses, and connectivity are unnecessary.
 
 
 
@@ -49,16 +50,16 @@ ep-in6 type ipv6 addr ::1 port 8080 netns 1
 
 `netns 1` of `ip graft add` indicates the actual endpoints are in the
 default network namespace (netns of pid 1). An AF_GRAFT socket
-assigned to ep-in4 on this namespace, the socket is grafted onto the
-socket opened on 127.0.0.1:8080 in host network stack across network
-namespace boundary.
+assigned to ep-in4 on this namespace is grafted onto the socket opened
+on 127.0.0.1:8080 in host network stack across network namespace
+boundary.
 
 
 
 ## 3. Run applications with AF_GRAFT in containers
 
 It is ready to run the graft-demo container. The graft-demo container
-image is configured to use conversion mapping listed below:
+image is configured to use the conversion mapping listed below:
 
 - Server-side sockets (bind(), listen(), and accept())
     - use ep-in4 for INADDR_ANY (0.0.0.0) with port number 0 to 65535
