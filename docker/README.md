@@ -115,6 +115,34 @@ GET /
 ```
 
 
+The figure shown below illustrates the overview of this example.
+graft-demo container shares the network namespace with net1 that has
+ep-in4 graft endpoint. The socket assigned to ep-in4 is grafted onto
+127.0.0.1:8080 on host network stack. When you change addr 127.0.0.1
+and port 8080 of ep-in4 graft endpoint to addr 0.0.0.0 and port 80,
+the nginx process in the graft-demo container is exposed to the
+Internet.
+
+         +-------------------------------+
+         |     graft-demo container      |
+         |                               |
+         |   nginx bind to 0.0.0.0:80    |
+         |              |                |
+         +--------------|----------------+
+         | netns        V                |
+         | of net1    ep-in4             |
+         |              |                |
+         +--------------|----------------+
+                        |
+                        | socket-grafting
+                        |
+         +--------------|----------------+
+         |  Host        V                |
+         | network  127.0.0.1:8080       |
+         |  stack                        |
+         +-------------------------------+
+
+
 ## 4. Modify container images
 
 af-graft/docker/demo/Dockerfile is the Dockerfile of the graft-demo
@@ -134,7 +162,9 @@ ENTRYPOINT [ "/usr/local/bin/graft",            \
 ```
 
 You can change graft endpoint names and conversion configuration by
-modifying the ENTRYPOINT part as you like.
+modifying the ENTRYPOINT part as you like, and you can also add your
+own packages to the AF_GRAFT-capable container images.
+
 
 
 
