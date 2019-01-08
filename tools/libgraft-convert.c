@@ -39,6 +39,7 @@
 static int verbose_level = 0;
 #define verbose_level_inc() verbose_level++
 #define pr_v(fmt, ...) if (verbose_level) { pr(fmt, __VA_ARGS__); }
+#define pr_vs(fmt, ...) if (verbose_level) { pr_s(fmt, __VA_ARGS__); }
 
 #define ENV_GRAFT_VERBOSE	"GRAFT_VERBOSE"
 #define ENV_GRAFT_INGRESS	"GRAFT_INGRESS_CONVERT"
@@ -593,7 +594,7 @@ int socket(int domain, int type, int protocol)
 	switch (domain) {
 	case AF_INET:
 	case AF_INET6:
-		pr_s("overwrite family %d with AF_GRAFT", domain);
+		pr_vs("overwrite family %d with AF_GRAFT", domain);
 	case AF_GRAFT:
 		new_domain = AF_GRAFT;
 		break;
@@ -687,7 +688,7 @@ int bind(int fd, const struct sockaddr *addr, socklen_t addrlen)
 		return original_bind(fd, addr, addrlen);
 	}
 
-	pr_s("convert bind %s to %s", buf, ca->epname);
+	pr_vs("convert bind %s to %s", buf, ca->epname);
 	return bind_for_graft_ep(fd, ca->epname);
 }
 
@@ -704,7 +705,7 @@ int setsockopt(int fd, int level, int optname,
 		return original_setsockopt(fd, level, optname, optval, optlen);
 
 	/* wrap setsockopt params in graft_sso_trans */
-	pr_s("wrap setsockopt() level=%d, optname=%d", level, optname);
+	pr_vs("wrap setsockopt() level=%d, optname=%d", level, optname);
 	memset(buf, 0, sizeof(buf));
 	trans = (struct graft_sso_trans *)buf;
 	trans->level = level;
@@ -742,7 +743,7 @@ static int bind_before_connect(int fd, const struct sockaddr *addr)
 		return 0;
 	}
 
-	pr_s("use %s for %s", cp->epname, buf);
+	pr_vs("use %s for %s", cp->epname, buf);
 
 	/* ok, bind() the fd to converted graft endpoint */
 	ret = bind_for_graft_ep(fd, cp->epname);
