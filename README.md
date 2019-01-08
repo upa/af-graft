@@ -2,33 +2,39 @@
 AF_GRAFT
 ========
 
-## What is this
+AF_GRAFT is a new socket address family for containers. AF_GRAFT
+sockets can be _grafted_ onto other address family sockets _across
+netns separation_.
 
-This is a new socket address family for containers. AF_GRAFT sockets
-can be _grafted_ onto other address family sockets _across netns
-separation_.
-
-By using AF\_GRAFT, applications can utilize host network stacks
+By using AF_GRAFT, applications can utilize host network stacks
 directly bypassing container network stacks. This mechanism improves
 throughput and latency of containerized applications.
 
 The detail is described in the paper [Grafting sockets for fast
-container networking](https://dl.acm.org/citation.cfm?id=3230723).
+container networking](https://dl.acm.org/citation.cfm?id=3230723) in
+ACM/IEEE Symposium on Architectures for Networking and Communications
+Systems 2018.
 
 
 ## Quick start
 
-We tested AF\_GRAFT on Ubuntu 16.04, Linux kernel 4.4.0-83-generic,
-and Ubuntu 18.04, Linux kernel 4.15.0-20-generic.
+We tested AF_GRAFT on
+- Ubuntu 16.04, kernel 4.4.0-83-generic
+- Ubuntu 18.04, kernel 4.15.0-43-generic
+- Fedora 29, kernel 4.19.13-300
 
 ### Compile
 
 ```shell-session
+$ sudo apt install flex bison # for iproute2
+
 $ git clone https://github.com/upa/af-graft.git
 $ cd af-graft
 $ make
-$ insmod kmod/af_graft.ko
 ```
+
+In addition to the kernel module and tools, a modified iproute2 will
+be compiled in accordance with your kernel version.
 
 Note that the current implementation overwrites AF_IPX with AF_GRAFT
 because Linux kernel prohibits dynamically adding a new address family
@@ -44,21 +50,18 @@ registered in the address family number, which is AF_IPX. In this
 case, please rmmod the ipx kernel module.
 
 
-In addition, compile iproute2 in accordance with your kernel version.
-iproute2-4.10.0 is for Ubnutu 16.04, and iproute2-4.15.0 for Ubuntu
-18.04.
-
 
 ### Install
 
 ```shell-session
-$ sudo apt install flex bison # for iproute2
 $ cd af_graft
 $ sudo make install
+$ modprobe af_graft
 ```
 
-default ip command is installed in /bin, and the AF_GRAFT-capable one is
-installed in /sbin/ip. So, we recommend you to make alias ip=/sbin/ip.
+default ip command is installed in /bin, and the AF_GRAFT-capable one
+is installed in /sbin/ip. So, we recommend you to make an alias
+ip=/sbin/ip.
 
 
 ### Endpoint
@@ -71,8 +74,8 @@ AF_GRAFT has its endpoints (graft endpoints). Each graft endpoint,
 which is identified by an arbitrary string, is associated with other
 AF endpoints.
 
-A modified iproute2 package contained in this repository can configure
-graft endpoints.
+The modified iproute2 contained in this repository can configure graft
+endpoints.
 
 ```shell-session
 $ ./iproute2-4.10.0/ip/ip graft help
@@ -89,15 +92,20 @@ Where: NAME := STRING
        ADDR := { IPv4_ADDRESS | IPv6_ADDRESS }
        PORT := { 0..65535 | dynamic }
        PATH := STRING
-$ ./iproute2-4.10.0/ip/ip graft add ep-test type ipv4 addr 127.0.0.1 port 8080
-$ ./iproute2-4.10.0/ip/ip graft show
+$ sudo /sbin/ip graft add ep-test type ipv4 addr 127.0.0.1 port 8080
+$ /sbin/ip graft show
 ep-test type ipv4 addr 127.0.0.1 port 8080
 ```
 
 This example creates a graft endpoint associated with 127.0.0.1:8080.
 The AF_GRAFT socket assigned to ep-http is grafted onto the AF_INET
-socket assigned to 127.0.0.1:8080. Note that if netns is not
-specified, default netns is used for target endpoints.
+socket assigned to 127.0.0.1:8080.
+
+A graft endpoints and the associated actual endpoint can be placed on
+different endpoints. For example, making a graft endpoint at a
+container and configuring the actual endpoint on a host network stack
+provides network performance improvement by container network stack
+bypassing.
 
 
 
@@ -105,7 +113,7 @@ specified, default netns is used for target endpoints.
 ### How to bind() AF_GRAFT sockets.
 
 To bind AF_GRAFT sockets to graft endpoints, we introduced a new
-sockaddr structure, struct sockaddr_gr. It is defined in
+sockaddr structure, `struct sockaddr_gr`. It is defined in
 include/graft.h.
 
 ```c
@@ -142,46 +150,97 @@ is cannot work with AF_GRAFT. A better solution is to support AF_GRAFT
 in application codes; however, it requires various significant effort.
 
 Therefore, we implemented a hijacking library to convert existing
-applications to AF_GRAFT-capable. tools/libgraft-hijack.so overrides
+applications to AF_GRAFT-capable. tools/libgraft-convert.so overrides
 socket-related functions and converts AF_INET or AF_INET6 sockets into
-AF_GRAFT without modifications to their codes. This is achieved by the
+AF_GRAFT without modifications to their codes. This relies on the
 [LD_PRELOAD
 trick](https://yurichev.com/mirrors/LD_PRELOAD/lca2009.pdf).
 
 
+`tools/graft` command is a wrapper script to run applications with
+AF_GRAFT by the LD_PRELOAD. libgraft-convert.so and graft command are
+installed into /usr/local/lib and /usr/local/bin respectively by make
+install.
+
+
 ```shell-session
-$ LD_PRELOAD=/[PATH_TO_REPO_DIR]/tools/libgraft-hijack.so GRAFT_CONV_PAIRS="0.0.0.0:5201=ep-test" iperf3 -s
-libgraft-hijack.so:466:socket(): overwrite family 10 with AF_GRAFT (4)
-libgraft-hijack.so:597:setsockopt(): wrap setsockopt() level=1, optname=2
-libgraft-hijack.so:531:bind(): no matched ep for fd=4, :::5201
-warning: this system does not seem to support IPv6 - trying IPv4
-libgraft-hijack.so:466:socket(): overwrite family 2 with AF_GRAFT (4)
-libgraft-hijack.so:597:setsockopt(): wrap setsockopt() level=1, optname=2
-libgraft-hijack.so:540:bind(): convert bind 0.0.0.0:5201 to ep-test
+$ graft -h
+/usr/local/bin/graft, AF_GRAFT conversion wrapper
+
+Usage: /usr/local/bin/graft [-i INGRESS] [-e EGRESS] -- command arguments
+
+optional arguments:
+  -h    help
+  -v    verbose mode
+  -i ADDRESS:PORT=EPNAME, conversion for ingress connections
+      PORT can be specified as range like PORT_START-PORT_END
+  -e PREFIX:PREFLEN=EPNAME, conversion for egress connections
+```
+
+There are two types of sockets, ingress and egress sockets (as known
+as server-side and client side sockets). An ingress socket is assigned
+to an endpoint by bind(), and the application calls listen() and
+accept() on the socket. At this side, `graft` command converts socket
+address family and sockaddr structure for bind() into AF_GRAFT and
+specified sockaddr_gr.
+
+
+An example shown below converts 0.0.0.0:5201 for a server socket of
+iperf3 into `ep-test` graft endpoint.
+
+```shell-session
+$ graft -i 0.0.0.0:5201=ep-test -- iperf3 -s -4
 -----------------------------------------------------------
 Server listening on 5201
 -----------------------------------------------------------
 
 ```
 
-This example runs iperf3 with an AF_GRAFT socket. `GRAFT_CONV_PAIRS`
-specifies conversion mapping from original sockaddr to sockaddr_gr.
-iperf3 try to bind 0.0.0.0:5201 (after :::5201). Then
-libgraft-hijack.so overrides this bind() system call, and it calls
-bind() with sockaddr_gr instead of sockaddr_in.
+The iperf3 server thinks it is listening on 0.0.0.0:5201, but it is
+actually listening on ep-test, 127.0.0.1:8080. iperf3 clients can
+connect to the server like:
 
+```shell-session
+$ iperf3 -c 127.0.0.1 -p 8080
+Connecting to host 127.0.0.1, port 8080
+[  4] local 127.0.0.1 port 38438 connected to 127.0.0.1 port 8080
+```
+
+
+On the other hand, for the egress side, which means client sockets for
+outbound connections, `-e` option can be used. This option specifies
+source graft endpoints in accordance with the destination IP addresses
+of the outbound connections.
+
+```shell-session
+$ sudo /sbin/ip graft add ep-out type ipv4 addr 127.0.0.1 port dynamic
+ep-out type ipv4 addr 127.0.0.1 port dynamic 
+ep-test type ipv4 addr 127.0.0.1 port 8080
+
+$ graft -e 0.0.0.0/0=ep-out -- iperf3 -c 127.0.0.1 -p 8080
+Connecting to host 127.0.0.1, port 8080
+[  4] local 127.0.0.1 port 57177 connected to 127.0.0.1 port 8080
+```
+
+The above example shows an iperf3 client with AF_GRAFT. All outbound
+connections (destination 0.0.0.0/0) uses `ep-out` for their source
+endpoints. Note that `port dynamic` indicates that sockets bind()ed
+to this endpoint uses randomly selected port numbers as usual client
+sockets.
+
+`graft` command supports both IPv4 and IPv6, and multiple ingress and
+egress conversion mappings. A use case is shown in [simple integration
+with docker](https://github.com/upa/af-graft/tree/master/docker).
 
 
 ## Integration with Containers Platforms
 
-ToDO
+ToDo
 
-AF_GRAFT enables grafting sockets in containers onto sockets in host
-network stack across the netns separation. However, we have not yet
-implemented integration with container runtimes such as docker (under
-development).
+Integrating docker or kubernetes is difficult,, because docker network
+plugin, CNI, and their abstractions focus on IP address and port
+number management. Integrating new endpoint abstraction requires
+significant effort..
 
-Instead, containers can directly configure graft endpoints in their
-netns with the NET_ADMIN capabaility. The docker/ directory containes
-two example Dockerfiles for testing AF_GRAFT with docker containers.
-
+Instead, we wrote a simple integration with docker containers. Please
+see [here](https://github.com/upa/af-graft/tree/master/docker).
