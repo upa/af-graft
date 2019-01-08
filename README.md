@@ -145,7 +145,7 @@ Then, `sock` can be used as usual TCP sockets.
 
 ### Run Applications with AF_GRAFT
 
-AF_GRAFT is a new address family; therefore, existing applications as
+AF_GRAFT is a new address family, therefore, existing applications as
 is cannot work with AF_GRAFT. A better solution is to support AF_GRAFT
 in application codes; however, it requires various significant effort.
 
@@ -158,9 +158,9 @@ trick](https://yurichev.com/mirrors/LD_PRELOAD/lca2009.pdf).
 
 
 `tools/graft` command is a wrapper script to run applications with
-AF_GRAFT by the LD_PRELOAD. libgraft-convert.so and graft command are
-installed into /usr/local/lib and /usr/local/bin respectively by make
-install.
+AF_GRAFT by the LD_PRELOAD. libgraft-convert.so and the `graft`
+command are installed into /usr/local/lib and /usr/local/bin
+respectively by make install.
 
 
 ```shell-session
@@ -177,16 +177,19 @@ optional arguments:
   -e PREFIX:PREFLEN=EPNAME, conversion for egress connections
 ```
 
+
+
+#### Server-side sockets
+
 There are two types of sockets, ingress and egress sockets (as known
-as server-side and client side sockets). An ingress socket is assigned
+as server-side and client-side sockets). An ingress socket is assigned
 to an endpoint by bind(), and the application calls listen() and
 accept() on the socket. At this side, `graft` command converts socket
 address family and sockaddr structure for bind() into AF_GRAFT and
 specified sockaddr_gr.
 
-
-An example shown below converts 0.0.0.0:5201 for a server socket of
-iperf3 into `ep-test` graft endpoint.
+An example shown below converts 0.0.0.0:5201 for a socket of
+iperf3 server into `ep-test` graft endpoint.
 
 ```shell-session
 $ graft -i 0.0.0.0:5201=ep-test -- iperf3 -s -4
@@ -206,6 +209,9 @@ Connecting to host 127.0.0.1, port 8080
 [  4] local 127.0.0.1 port 38438 connected to 127.0.0.1 port 8080
 ```
 
+
+
+#### Client-side sockets
 
 On the other hand, for the egress side, which means client sockets for
 outbound connections, `-e` option can be used. This option specifies
@@ -228,9 +234,35 @@ endpoints. Note that `port dynamic` indicates that sockets bind()ed
 to this endpoint uses randomly selected port numbers as usual client
 sockets.
 
-`graft` command supports both IPv4 and IPv6, and multiple ingress and
+
+
+#### Note
+
+1. `graft` command supports both IPv4 and IPv6, and multiple ingress and
 egress conversion mappings. A use case is shown in [simple integration
 with docker](https://github.com/upa/af-graft/tree/master/docker).
+
+
+2. `-v` option shows verbose message like:
+
+```shell-session
+$ graft -v -e 0.0.0.0/0=ep-out -- iperf3 -c 127.0.0.1 -p 8080
+LD_PRELOAD=/usr/local/lib/libgraft-convert.so
+GRAFT_VERBOSE=1
+GRAFT_INGRESS_CONVERT=
+GRAFT_EGRESS_CONVERT=0.0.0.0/0=ep-out
+libgraft-convert.so:419:make_conv_prefix(): use ep ep-out for 0.0.0.0/0 (egress)
+libgraft-convert.so:597:socket(): overwrite family 2 with AF_GRAFT
+libgraft-convert.so:746:bind_before_connect(): use ep-out for 127.0.0.1:8080
+Connecting to host 127.0.0.1, port 8080
+libgraft-convert.so:597:socket(): overwrite family 2 with AF_GRAFT
+libgraft-convert.so:746:bind_before_connect(): use ep-out for 127.0.0.1:8080
+[  4] local 127.0.0.1 port 50583 connected to 127.0.0.1 port 8080
+[ ID] Interval           Transfer     Bandwidth       Retr  Cwnd
+[  4]   0.00-1.00   sec  4.09 GBytes  35.1 Gbits/sec    0   3.12 MBytes       
+[  4]   1.00-2.00   sec  3.95 GBytes  34.0 Gbits/sec    0   3.12 MBytes   
+```
+
 
 
 ## Integration with Containers Platforms
