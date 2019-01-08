@@ -23,7 +23,7 @@ kubernetes.
 $ docker run --net=none -d -it --name net1 ubuntu bash
 ```
 
-This creates a container named `net1`. --net=none just creates
+This creates a container named `net1`. --net=none just creates a
 separated network namespace and configures nothing. This container
 will only contains graft endpoints on its network namespace. Thus, any
 interfaces, addresses, and connectivity are unnecessary.
