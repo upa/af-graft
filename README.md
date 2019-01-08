@@ -253,10 +253,11 @@ and egress conversion mappings. A use case is shown in [simple
 integration with
 docker](https://github.com/upa/af-graft/tree/master/docker), and a
 simple example is: `graft -e 127.0.0.0/8=lo-out4 -e 0.0.0.0/0=ep-out4
--i 127.0.0.1:0-65535=lo-in4 -i 0.0.0.0:0-65535=ep-in4`. The egress
-mapping follows the longest prefix match basis, and the ingress
-mapping also allows multiple mappings. This feature might be useful
-when the host network stack has multiple interfaces.
+-e 0::0/0=ep-out6 -i 127.0.0.1:0-65535=lo-in4 -i
+0.0.0.0:0-65535=ep-in4`. The egress mapping follows the longest prefix
+match basis, and the ingress mapping also allows multiple
+mappings. This feature might be useful when the host network stack has
+multiple interfaces.
 
 
 
