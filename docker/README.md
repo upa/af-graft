@@ -13,18 +13,18 @@ Both images are identical.
 
 ## 1. Prepare a network namespace for graft endpoints
 
-Create a docker container that is used as a network namespace for
+Create a docker container that is used as just a network namespace for
 other containers where applications run. This is similar to _Pod_ in
 kubernetes.
 
 
 ```shell-session
-$ docker run --net=none -d -it --rm --name net1 ubuntu bash
+$ docker run --net=none -d -it --name net1 ubuntu bash
 ```
 
 This creates a container named `net1`. This container only contains
 graft endpoints on its network namespace. Thus, any interfaces,
-addresses and connectivity are unnecessary. --net=none just creates
+addresses, and connectivity are unnecessary. --net=none just creates
 separated network namespace and configures nothing.
 
 
@@ -47,7 +47,7 @@ ep-in4 type ipv4 addr 127.0.0.1 port 8080 netns 1
 ep-in6 type ipv6 addr ::1 port 8080 netns 1
 ```
 
-`netns 1` of ip graft add indicates the actual endpoints are in the
+`netns 1` of `ip graft add` indicates the actual endpoints are in the
 default network namespace (netns of pid 1). An AF_GRAFT socket
 assigned to ep-in4 on this namespace, the socket is grafted onto the
 socket opened on 127.0.0.1:8080 in host network stack across network
@@ -58,7 +58,7 @@ namespace boundary.
 ## 3. Run applications with AF_GRAFT in containers
 
 It is ready to run the graft-demo container. The graft-demo container
-image are configured to use conversion mapping listed below:
+image is configured to use conversion mapping listed below:
 
 - Server-side sockets (bind(), listen(), and accept())
     - use ep-in4 for INADDR_ANY (0.0.0.0) with port number 0 to 65535
@@ -69,10 +69,10 @@ image are configured to use conversion mapping listed below:
 
 
 We prepared ep-in4 and ep-in6 at the last step, so we can run server
-applications as examples.
+applications like:
 
 ```shell-session
-$ docker run -it --rm --net=container:net1 upaa/graft-demo iperf3 -s -4 
+$ docker run -it --net=container:net1 upaa/graft-demo iperf3 -s -4 
 -----------------------------------------------------------
 Server listening on 5201
 -----------------------------------------------------------
@@ -82,22 +82,22 @@ Server listening on 5201
 namespace with the net1 container that has the graft endpoints.  The
 iperf3 server process try to bind() the socket to 0.0.0.0:5201 by
 default, and it is converted into ep-in4. The socket bind()ed to the
-ep-in4 is grafted onto 0.0.0.0:8080 at host network stack. This is
+ep-in4 is grafted onto 0.0.0.0:8080 at the host network stack. This is
 socket-grafting.
 
 
-Another example is to run nginx web server using AF_GRAFT.
+Another example is to run nginx web server using AF_GRAFT:
 
 ```shell-session
-$ docker run -it --rm --net=container:net1 upaa/graft-demo nginx -g "daemon off;"
+$ docker run -it --net=container:net1 upaa/graft-demo nginx -g "daemon off;"
 ```
 
 
 The nginx process opens two sockets and bind() them to 0.0.0.0:80 and
 [::]:80. Both bind() are converted into ep-in4 and ep-in6, and grafted
-onto host stack. So, you can access the nginx directly across network
-namespace boundary, without NAT, veth, and network stack processing at
-container's network stack.
+onto the host network stack. So, you can access the nginx directly
+across network namespace boundary, without NAT, veth, and network
+stack processing at the container network stack.
 
 ```shell-session
 $ telnet localhost 8080
@@ -151,3 +151,10 @@ Preparing a separated network namespace with a docker container for
 maintaining graft endpoints like the net1 container described above
 enables us to play AF_GRAFT without such significant effort to modify
 docker itself or implementing complicated network plugins.
+
+
+
+### How much does socket-grafting improve network performance
+
+Please see the paper [Grafting sockets for fast container
+networking](https://dl.acm.org/citation.cfm?id=3230723).
