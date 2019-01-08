@@ -243,7 +243,17 @@ egress conversion mappings. A use case is shown in [simple integration
 with docker](https://github.com/upa/af-graft/tree/master/docker).
 
 
-2. `-v` option shows verbose message like:
+2. `-i` option can specify port nubers in a range fashion like:
+
+```shell-session
+$ graft -i 0.0.0.0:0-65535=ep-test -- iperf3 -s -4
+-----------------------------------------------------------
+Server listening on 5201
+-----------------------------------------------------------
+```
+
+
+3. `-v` option shows verbose message like:
 
 ```shell-session
 $ graft -v -e 0.0.0.0/0=ep-out -- iperf3 -c 127.0.0.1 -p 8080
