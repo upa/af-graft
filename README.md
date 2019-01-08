@@ -238,12 +238,7 @@ sockets.
 
 ### Note
 
-1. `graft` command supports both IPv4 and IPv6, and multiple ingress and
-egress conversion mappings. A use case is shown in [simple integration
-with docker](https://github.com/upa/af-graft/tree/master/docker).
-
-
-2. `-i` option can specify port nubers in a range fashion like:
+1. `-i` option can specify port nubers in a range fashion like:
 
 ```shell-session
 $ graft -i 0.0.0.0:0-65535=ep-test -- iperf3 -s -4
@@ -251,6 +246,18 @@ $ graft -i 0.0.0.0:0-65535=ep-test -- iperf3 -s -4
 Server listening on 5201
 -----------------------------------------------------------
 ```
+
+
+2. `graft` command supports both IPv4 and IPv6, and multiple ingress
+and egress conversion mappings. A use case is shown in [simple
+integration with
+docker](https://github.com/upa/af-graft/tree/master/docker), and a
+simple example is: `graft -e 127.0.0.0/8=lo-out4 -e 0.0.0.0/0=ep-out4
+-i 127.0.0.1:0-65535=lo-in4 -i 0.0.0.0:0-65535=ep-in4`. The egress
+mapping follows the longest prefix match basis, and the ingress
+mapping also allows multiple mappings. This feature might be useful
+when the host network stack has multiple interfaces.
+
 
 
 3. `-v` option shows verbose message like:
