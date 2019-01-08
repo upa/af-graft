@@ -2,7 +2,7 @@
 
 
 usage() {
-	echo "$0: execut command on a docker container"
+	echo "$0: execute command on a netns of a specified docker container"
 	echo "Usage: $0 [container id] command arguments"
 	exit 1
 }
@@ -15,7 +15,7 @@ fi
 
 cid=$1
 
-# remove progname and cid
+# remove cid
 shift 1
 
 netnsdir="/var/run/netns"
@@ -25,16 +25,19 @@ if [ ! -e $netnsdir ]; then
 fi
 
 # create symlink for container netns on /var/run/netns
-pid=$(docker inspect $cid --format "{{.State.Pid}}")
-nsname=docker-netns-$pid
-dockernsdir=/var/run/netns/$nsname
+docker_nsdir=$(docker inspect $cid --format "{{.NetworkSettings.SandboxKey}}")
+docker_nsid=$(docker inspect $cid --format "{{.NetworkSettings.SandboxID}}")
+docker_nsid=${docker_nsid:0:12}
+nsname=docker-netns-$docker_nsid
+nsdir=/var/run/netns/$nsname
+
 if [ -e dockernsdir ]; then
-	rm $dockernsdir
+	rm $nsdir
 fi
-ln -sf /proc/$pid/ns/net $dockernsdir
+ln -sf $docker_nsdir $nsdir
 
 # execute command on the netns
 ip netns exec $nsname $@
 
 # clean up
-rm $dockernsdir
+rm $nsdir

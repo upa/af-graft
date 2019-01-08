@@ -22,6 +22,7 @@ libgraft-convert.so: libgraft-convert.c $(LIB)
 install: all
 	install -m 644 -D ./libgraft-convert.so	/usr/local/lib/
 	install -m 755 -D ./graft /usr/local/bin/
+	install -m 755 -D ./docker-ns-exec /usr/local/bin/
 
 clean:
 	rm $(PROGNAME) $(LIB)

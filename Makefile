@@ -11,7 +11,7 @@ all:
 	done
 
 install:
-	for i in kmod $(iproute2-src); do \
+	for i in kmod $(iproute2-src) tools; do \
 		echo; echo $$i; \
 		make -C $$i install; \
 	done
