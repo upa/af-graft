@@ -101,10 +101,10 @@ The AF_GRAFT socket assigned to ep-http is grafted onto the AF_INET
 socket assigned to 127.0.0.1:8080.
 
 A graft endpoints and the associated actual endpoint can be placed on
-different endpoints. For example, making a graft endpoint at a
-container and configuring the actual endpoint on a host network stack
-provides network performance improvement by container network stack
-bypassing.
+different network namespaces. For example, making a graft endpoint at
+a container and configuring the actual endpoint on a host network
+stack provides network performance improvement by container network
+stack bypassing.
 
 
 
@@ -219,6 +219,7 @@ of the outbound connections.
 
 ```shell-session
 $ sudo /sbin/ip graft add ep-out type ipv4 addr 127.0.0.1 port dynamic
+$ /sbin/ip graft show
 ep-out type ipv4 addr 127.0.0.1 port dynamic 
 ep-test type ipv4 addr 127.0.0.1 port 8080
 
