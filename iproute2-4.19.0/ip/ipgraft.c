@@ -83,7 +83,7 @@ static int parse_args(int argc, char **argv, struct graft_param *p)
 			AF_GRAFT_EPNAME_MAX);
 		exit(-1);
 	}
-	strncpy(p->name, *argv, AF_GRAFT_EPNAME_MAX);
+	strncpy(p->name, *argv, AF_GRAFT_EPNAME_MAX - 1);
 
 
 	argc--;
@@ -144,7 +144,7 @@ static int parse_args(int argc, char **argv, struct graft_param *p)
 		} else if (strcmp(*argv, "netns") == 0) {
 
 			NEXT_ARG();
-			strncpy(p->netns_path, *argv, UNIX_PATH_MAX);
+			strncpy(p->netns_path, *argv, UNIX_PATH_MAX - 1);
 			netns = netns_get_fd(*argv);
 			if (netns > 0)
 				p->fd = netns;
