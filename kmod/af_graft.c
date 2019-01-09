@@ -807,8 +807,8 @@ static int graft_setsockopt(struct socket *sock, int level,
 		goto kmalloc_out;
 	}
 	n = copy_from_user(buf, optval, optlen);
-	if (n < optlen) {
-		pr_err("%s: copy %dB from user but intended to get %dB\n",
+	if (n) {
+		pr_err("%s: %d bytes left to copy %d bytes\n",
 		       __func__, n, optlen);
 		goto out;
 	}
