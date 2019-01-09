@@ -810,6 +810,7 @@ static int graft_setsockopt(struct socket *sock, int level,
 	if (n) {
 		pr_err("%s: %d bytes left to copy %d bytes\n",
 		       __func__, n, optlen);
+		ret = -EINVAL;
 		goto out;
 	}
 
