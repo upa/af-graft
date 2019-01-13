@@ -6,13 +6,17 @@ AF_GRAFT is a new socket address family for containers. AF_GRAFT
 sockets can be _grafted_ onto other address family sockets _across
 netns separation_.
 
+
 By using AF_GRAFT, applications can utilize host network stacks
 directly bypassing container network stacks. This mechanism improves
 throughput and latency of containerized applications.
 
+
 <img src="https://raw.githubusercontent.com/wiki/upa/af-graft/images/socket-grafting.png" width=450px>
+
 Fig 1. The data path of AF_GRAFT: AF_GRAFT sockets in containers 
 involve a single network stack bypassing conatiner network stack.
+
 
 The detail is described in the paper [Grafting sockets for fast
 container networking](https://dl.acm.org/citation.cfm?id=3230723) in
